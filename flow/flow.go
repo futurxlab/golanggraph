@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
-	flowcontract "golanggraph/contract"
-	"golanggraph/edge"
-	"golanggraph/state"
+	flowcontract "github.com/futurxlab/golanggraph/contract"
+	"github.com/futurxlab/golanggraph/edge"
+	"github.com/futurxlab/golanggraph/state"
 
-	"golanggraph/logger"
-	libutils "golanggraph/utils"
-	"golanggraph/xerror"
+	"github.com/futurxlab/golanggraph/logger"
+	libutils "github.com/futurxlab/golanggraph/utils"
+	"github.com/futurxlab/golanggraph/xerror"
 
 	"github.com/google/uuid"
 )

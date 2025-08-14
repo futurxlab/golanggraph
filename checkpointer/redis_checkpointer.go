@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"golanggraph/state"
-	"golanggraph/xerror"
+	"github.com/futurxlab/golanggraph/state"
+	"github.com/futurxlab/golanggraph/xerror"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"

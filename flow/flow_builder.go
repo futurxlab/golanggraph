@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"slices"
 
-	flowcontract "golanggraph/contract"
-	"golanggraph/edge"
-	"golanggraph/logger"
-	"golanggraph/state"
+	flowcontract "github.com/futurxlab/golanggraph/contract"
+	"github.com/futurxlab/golanggraph/edge"
+	"github.com/futurxlab/golanggraph/logger"
+	"github.com/futurxlab/golanggraph/state"
 )
 
 type FlowBuilder struct {

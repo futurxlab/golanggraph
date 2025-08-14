@@ -7,8 +7,8 @@ import (
 	"math/rand"
 	"time"
 
-	"golanggraph/logger"
-	"golanggraph/xerror"
+	"github.com/futurxlab/golanggraph/logger"
+	"github.com/futurxlab/golanggraph/xerror"
 
 	"github.com/avast/retry-go"
 	"github.com/tmc/langchaingo/llms"

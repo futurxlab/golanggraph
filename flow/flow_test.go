@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"testing"
 
-	"golanggraph/checkpointer"
-	flowcontract "golanggraph/contract"
-	"golanggraph/edge"
+	"github.com/futurxlab/golanggraph/checkpointer"
+	flowcontract "github.com/futurxlab/golanggraph/contract"
+	"github.com/futurxlab/golanggraph/edge"
 
-	"golanggraph/logger"
-	"golanggraph/state"
+	"github.com/futurxlab/golanggraph/logger"
+	"github.com/futurxlab/golanggraph/state"
 )
 
 type sample1Node struct{}

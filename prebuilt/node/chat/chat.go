@@ -3,12 +3,12 @@ package chat
 import (
 	"context"
 
-	flowcontract "golanggraph/contract"
-	"golanggraph/prebuilt/langchaingoextension/native"
-	"golanggraph/state"
+	flowcontract "github.com/futurxlab/golanggraph/contract"
+	"github.com/futurxlab/golanggraph/prebuilt/langchaingoextension/native"
+	"github.com/futurxlab/golanggraph/state"
 
-	"golanggraph/logger"
-	"golanggraph/xerror"
+	"github.com/futurxlab/golanggraph/logger"
+	"github.com/futurxlab/golanggraph/xerror"
 
 	"github.com/tmc/langchaingo/llms"
 )

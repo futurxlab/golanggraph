@@ -4,7 +4,7 @@ import (
 	"context"
 	"runtime/debug"
 
-	"golanggraph/logger"
+	"github.com/futurxlab/golanggraph/logger"
 )
 
 // 安全地启动一个 goroutine

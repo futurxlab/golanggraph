@@ -3,8 +3,8 @@ package tools
 import (
 	"context"
 
-	flowcontract "golanggraph/contract"
-	"golanggraph/state"
+	flowcontract "github.com/futurxlab/golanggraph/contract"
+	"github.com/futurxlab/golanggraph/state"
 
 	"github.com/tmc/langchaingo/llms"
 )

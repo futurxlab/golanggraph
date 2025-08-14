@@ -6,14 +6,14 @@ import (
 	"os"
 	"strings"
 
-	"golanggraph/checkpointer"
-	flowcontract "golanggraph/contract"
-	"golanggraph/edge"
-	"golanggraph/flow"
-	"golanggraph/logger"
-	"golanggraph/prebuilt/node/chat"
-	"golanggraph/state"
-	"golanggraph/xerror"
+	"github.com/futurxlab/golanggraph/checkpointer"
+	flowcontract "github.com/futurxlab/golanggraph/contract"
+	"github.com/futurxlab/golanggraph/edge"
+	"github.com/futurxlab/golanggraph/flow"
+	"github.com/futurxlab/golanggraph/logger"
+	"github.com/futurxlab/golanggraph/prebuilt/node/chat"
+	"github.com/futurxlab/golanggraph/state"
+	"github.com/futurxlab/golanggraph/xerror"
 
 	"github.com/tmc/langchaingo/llms"
 )

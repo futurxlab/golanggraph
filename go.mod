@@ -1,4 +1,4 @@
-module golanggraph
+module github.com/futurxlab/golanggraph
 
 go 1.24.5
 

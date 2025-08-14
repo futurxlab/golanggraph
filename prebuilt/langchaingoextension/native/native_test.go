@@ -3,8 +3,9 @@ package native
 import (
 	"context"
 	"fmt"
-	"golanggraph/logger"
 	"testing"
+
+	"github.com/futurxlab/golanggraph/logger"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/tmc/langchaingo/llms"

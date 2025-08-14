@@ -7,12 +7,12 @@ import (
 	"sync"
 	"time"
 
-	flowcontract "golanggraph/contract"
-	"golanggraph/state"
+	flowcontract "github.com/futurxlab/golanggraph/contract"
+	"github.com/futurxlab/golanggraph/state"
 
-	"golanggraph/logger"
-	"golanggraph/utils/cache"
-	"golanggraph/xerror"
+	"github.com/futurxlab/golanggraph/logger"
+	"github.com/futurxlab/golanggraph/utils/cache"
+	"github.com/futurxlab/golanggraph/xerror"
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"

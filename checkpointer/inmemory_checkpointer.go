@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"golanggraph/state"
+	"github.com/futurxlab/golanggraph/state"
 
 	"github.com/google/uuid"
 )

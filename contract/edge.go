@@ -3,7 +3,7 @@ package flowcontract
 import (
 	"context"
 
-	"golanggraph/state"
+	"github.com/futurxlab/golanggraph/state"
 )
 
 type ConditionEdgeFunc func(ctx context.Context, state state.State) (string, error)

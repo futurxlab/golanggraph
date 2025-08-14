@@ -3,7 +3,7 @@ package toolcondition
 import (
 	"context"
 
-	"golanggraph/state"
+	"github.com/futurxlab/golanggraph/state"
 
 	"github.com/tmc/langchaingo/llms"
 )

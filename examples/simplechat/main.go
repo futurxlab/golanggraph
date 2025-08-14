@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"os"
 
-	"golanggraph/checkpointer"
-	flowcontract "golanggraph/contract"
-	"golanggraph/edge"
-	"golanggraph/flow"
-	"golanggraph/logger"
-	"golanggraph/prebuilt/node/chat"
-	"golanggraph/state"
+	"github.com/futurxlab/golanggraph/checkpointer"
+	flowcontract "github.com/futurxlab/golanggraph/contract"
+	"github.com/futurxlab/golanggraph/edge"
+	"github.com/futurxlab/golanggraph/flow"
+	"github.com/futurxlab/golanggraph/logger"
+	"github.com/futurxlab/golanggraph/prebuilt/node/chat"
+	"github.com/futurxlab/golanggraph/state"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -24,7 +24,7 @@ func main() {
 	}
 
 	// create chat node
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	apiKey := os.Getenv("OPENAI_API_KEY")
 	chat, err := chat.NewChatNode(
 		chat.WithLLM([]string{
 			fmt.Sprintf("openai;https://api.openai.com/v1;%s;gpt-4o-mini", apiKey),

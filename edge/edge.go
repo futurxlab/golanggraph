@@ -1,6 +1,6 @@
 package edge
 
-import flowcontract "golanggraph/contract"
+import flowcontract "github.com/futurxlab/golanggraph/contract"
 
 type Edge struct {
 	From          string

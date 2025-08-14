@@ -3,7 +3,7 @@ package flowcontract
 import (
 	"context"
 
-	"golanggraph/state"
+	"github.com/futurxlab/golanggraph/state"
 )
 
 type Node interface {

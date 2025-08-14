@@ -4,12 +4,12 @@ import (
 	"context"
 	"sync"
 
-	flowcontract "golanggraph/contract"
-	"golanggraph/state"
+	flowcontract "github.com/futurxlab/golanggraph/contract"
+	"github.com/futurxlab/golanggraph/state"
 
-	"golanggraph/logger"
-	"golanggraph/utils"
-	"golanggraph/xerror"
+	"github.com/futurxlab/golanggraph/logger"
+	"github.com/futurxlab/golanggraph/utils"
+	"github.com/futurxlab/golanggraph/xerror"
 
 	"github.com/tmc/langchaingo/llms"
 )

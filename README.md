@@ -4,7 +4,7 @@ Lightweight AI Agent SDK inspired from LangGraph, written in Golang, so called g
 
 **Core Philosophy**: The heart of golanggraph is **flexible context management**. You can freely assemble and pass context between various nodes in your agent, giving you complete control over what information flows to the next step in your workflow.
 
-## 🚀 Features
+## Features
 
 - **Graph-based Workflow Design**: Define workflows as directed graphs with nodes and edges
 - **Conditional Routing**: Dynamic edge routing based on state conditions
@@ -15,7 +15,7 @@ Lightweight AI Agent SDK inspired from LangGraph, written in Golang, so called g
 - **Multiple Checkpointing Backends**: In-memory and Redis-based checkpointing
 - **Concurrent Execution**: Parallel processing of independent workflow branches
 
-## 🏗️ Architecture
+## Architecture
 
 ### Core Concepts
 
@@ -48,10 +48,10 @@ A `Checkpointer` provides persistence and recovery capabilities:
 - Resume execution from failures
 - Support for multiple storage backends
 
-## 📦 Installation
+## Installation
 
 ```bash
-go get github.com/yourusername/golanggraph
+go get github.com/futurxlab/golanggraph
 ```
 
 ## 🔧 Quick Start
@@ -63,9 +63,9 @@ package main
 
 import (
     "context"
-    "golanggraph/flow"
-    "golanggraph/checkpointer"
-    "golanggraph/logger"
+    "github.com/futurxlab/golanggraph/flow"
+    "github.com/futurxlab/golanggraph/checkpointer"
+    "github.com/futurxlab/golanggraph/logger"
 )
 
 func main() {
@@ -114,7 +114,7 @@ func (n *MyCustomNode) Run(ctx context.Context, state *state.State, streamFunc f
 }
 ```
 
-## 📚 Examples
+## Examples
 
 ### 1. Simple Chat Example
 
@@ -128,7 +128,7 @@ A basic example demonstrating how to create a simple chat workflow with an LLM.
 **Usage:**
 ```bash
 cd examples/simplechat
-export ANTHROPIC_API_KEY="your_api_key"
+export OPENAI_API_KEY="your_api_key"
 go run main.go
 ```
 
@@ -149,7 +149,7 @@ Demonstrates a RAG workflow that enhances user queries with knowledge base infor
 **Usage:**
 ```bash
 cd examples/rag
-export ANTHROPIC_API_KEY="your_api_key"
+export OPENAI_API_KEY="your_api_key"
 go run main.go
 ```
 
@@ -171,7 +171,7 @@ Shows how to integrate external tools via MCP servers for enhanced AI capabiliti
 **Usage:**
 ```bash
 cd examples/mcp
-export ANTHROPIC_API_KEY="your_api_key"
+export OPENAI_API_KEY="your_api_key"
 go run main.go
 ```
 
@@ -181,7 +181,7 @@ go run main.go
 - Demonstrates tool selection and execution
 - Shows how AI can use external tools dynamically
 
-## 🛠️ Advanced Usage
+## Advanced Usage
 
 ### Conditional Edges
 
@@ -266,13 +266,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - **Discussions**: Join community discussions on GitHub Discussions
 - **Documentation**: Check the code examples and inline documentation
 
-## 🔗 Related Projects
+## Related Projects
 
 - [LangChain Go](https://github.com/tmc/langchaingo) - LLM framework integration
 - [MCP Go](https://github.com/mark3labs/mcp-go) - Model Context Protocol implementation
-- [Redis Go](https://github.com/redis/go-redis) - Redis client for checkpointing
+- [litellm](https://github.com/BerriAI/litellm) - LLM Gateway
 
 ---
 
-**GolangGraph** - Building intelligent workflows, one node at a time. 🚀
-
+**GolangGraph** - Building intelligent workflows, one node at a time. 

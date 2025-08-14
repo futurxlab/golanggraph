@@ -3,7 +3,7 @@ package flowcontract
 import (
 	"context"
 
-	"golanggraph/state"
+	"github.com/futurxlab/golanggraph/state"
 )
 
 type StreamFunc func(ctx context.Context, event *FlowStreamEvent) error
