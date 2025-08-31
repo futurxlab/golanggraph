@@ -10,8 +10,7 @@ import (
 )
 
 var (
-	encCache   sync.Map
-	tokenCache sync.Map
+	encCache sync.Map
 )
 
 func EncodeStringByModel(content string, model string) ([]int, error) {
