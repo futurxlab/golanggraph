@@ -141,28 +141,6 @@ func NewEmbedder(connectionStrings []string, cache *cache.MemCache, logger logge
 			}
 
 			embedders[llmOption.Model] = append(embedders[llmOption.Model], embedder)
-		case "azure":
-			llm, err := openai.New(
-				openai.WithAPIType(openai.APITypeAzure),
-				openai.WithToken(llmOption.APIKey),
-				openai.WithBaseURL(llmOption.BaseURL),
-				openai.WithEmbeddingModel(llmOption.Model),
-				openai.WithModel("dummy"))
-
-			if err != nil {
-				return nil, err
-			}
-
-			embedder, err := embeddings.NewEmbedder(llm)
-			if err != nil {
-				return nil, err
-			}
-
-			if embedders[llmOption.Model] == nil {
-				embedders[llmOption.Model] = make([]embeddings.Embedder, 0)
-			}
-
-			embedders[llmOption.Model] = append(embedders[llmOption.Model], embedder)
 		}
 	}
 
