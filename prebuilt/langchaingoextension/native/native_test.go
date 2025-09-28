@@ -19,7 +19,7 @@ func TestNativeLLM(t *testing.T) {
 
 	llm, err := NewChatLLM(
 		[]string{"openai;https://litellm.futurx.cc/v1;sk-xxxx;glm-4"},
-		logger,
+		WithLogger(logger),
 	)
 
 	if err != nil {

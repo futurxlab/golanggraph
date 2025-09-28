@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"time"
 
 	"github.com/futurxlab/golanggraph/logger"
@@ -26,9 +27,24 @@ var (
 	ModelKey ContextKey = "model"
 )
 
+type ChatLLMOption func(*ChatLLM)
+
+func WithLogger(logger logger.ILogger) ChatLLMOption {
+	return func(c *ChatLLM) {
+		c.logger = logger
+	}
+}
+
+func WithHTTPClient(httpClient *http.Client) ChatLLMOption {
+	return func(c *ChatLLM) {
+		c.httpClient = httpClient
+	}
+}
+
 type ChatLLM struct {
-	llms   map[string][]llms.Model
-	logger logger.ILogger
+	llms       map[string][]llms.Model
+	logger     logger.ILogger
+	httpClient *http.Client
 }
 
 func (chat *ChatLLM) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
@@ -123,7 +139,21 @@ func (chat *ChatLLM) getLLM(ctx context.Context) (llms.Model, string) {
 	return nil, ""
 }
 
-func NewChatLLM(connectionStrings []string, logger logger.ILogger) (*ChatLLM, error) {
+func NewChatLLM(connectionStrings []string, options ...ChatLLMOption) (*ChatLLM, error) {
+
+	logger, err := logger.NewLogger()
+	if err != nil {
+		return nil, err
+	}
+
+	chat := &ChatLLM{
+		logger:     logger,
+		httpClient: http.DefaultClient,
+	}
+
+	for _, option := range options {
+		option(chat)
+	}
 
 	llmDeployments := make(map[string][]llms.Model)
 	for _, conn := range connectionStrings {
@@ -135,7 +165,8 @@ func NewChatLLM(connectionStrings []string, logger logger.ILogger) (*ChatLLM, er
 				openai.WithAPIType(openai.APITypeOpenAI),
 				openai.WithToken(llmOption.APIKey),
 				openai.WithBaseURL(llmOption.BaseURL),
-				openai.WithModel(llmOption.Model))
+				openai.WithModel(llmOption.Model),
+				openai.WithHTTPClient(chat.httpClient))
 			if err != nil {
 				return nil, err
 			}

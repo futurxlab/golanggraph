@@ -148,7 +148,7 @@ func NewChatNode(options ...ChatOption) (*ChatNode, error) {
 		option(chat)
 	}
 
-	llm, err := native.NewChatLLM(chat.llms, chat.logger)
+	llm, err := native.NewChatLLM(chat.llms, native.WithLogger(chat.logger))
 	if err != nil {
 		return nil, err
 	}
