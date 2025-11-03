@@ -74,7 +74,7 @@ func (chat *ChatLLM) GenerateContent(ctx context.Context, messages []llms.Messag
 			var err error
 			llm, model := chat.getLLM(ctx)
 
-			chat.logger.Infof(ctx, "using native llms model %s", model)
+			chat.logger.Debugf(ctx, "using native llms model %s", model)
 
 			if llm == nil {
 				return retry.Unrecoverable(ErrLLMNotFound)

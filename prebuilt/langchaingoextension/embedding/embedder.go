@@ -65,7 +65,7 @@ func (embedder *Embedder) EmbedQuery(ctx context.Context, text string) ([]float3
 
 	client, model := embedder.getEmbedder(ctx)
 
-	embedder.logger.Infof(ctx, "using embedder, model: %s", model)
+	embedder.logger.Debugf(ctx, "using embedder, model: %s, text length: %d", model, len(text))
 
 	if client == nil {
 		return nil, ErrEmbedderNotFound
