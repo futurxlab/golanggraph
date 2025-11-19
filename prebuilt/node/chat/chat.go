@@ -21,9 +21,15 @@ const (
 
 type ChatOption func(*ChatNode)
 
-func WithLLM(llms []string) ChatOption {
+func WithNativeLLM(llm *native.ChatLLM) ChatOption {
 	return func(c *ChatNode) {
-		c.llms = llms
+		c.nativeLLM = llm
+	}
+}
+
+func WithLLMConnectionStrings(connectionStrings []string) ChatOption {
+	return func(c *ChatNode) {
+		c.connectionStrings = connectionStrings
 	}
 }
 
@@ -54,7 +60,7 @@ func WithLogger(logger logger.ILogger) ChatOption {
 type ChatNode struct {
 	name               string
 	systemPromptPrefix string
-	llms               []string
+	connectionStrings  []string
 	nativeLLM          *native.ChatLLM
 	tools              []llms.Tool
 	logger             logger.ILogger
@@ -148,12 +154,13 @@ func NewChatNode(options ...ChatOption) (*ChatNode, error) {
 		option(chat)
 	}
 
-	llm, err := native.NewChatLLM(chat.llms, native.WithLogger(chat.logger))
-	if err != nil {
-		return nil, err
+	if chat.nativeLLM == nil {
+		llm, err := native.NewChatLLM(chat.connectionStrings, native.WithLogger(chat.logger))
+		if err != nil {
+			return nil, err
+		}
+		chat.nativeLLM = llm
 	}
-
-	chat.nativeLLM = llm
 
 	return chat, nil
 }
