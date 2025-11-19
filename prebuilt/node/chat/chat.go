@@ -21,15 +21,15 @@ const (
 
 type ChatOption func(*ChatNode)
 
-func WithNativeLLM(llm *native.ChatLLM) ChatOption {
+func WithLLM(llm llms.Model) ChatOption {
 	return func(c *ChatNode) {
-		c.nativeLLM = llm
+		c.llm = llm
 	}
 }
 
 func WithLLMConnectionStrings(connectionStrings []string) ChatOption {
 	return func(c *ChatNode) {
-		c.connectionStrings = connectionStrings
+		c.llmConnectionStrings = connectionStrings
 	}
 }
 
@@ -58,12 +58,12 @@ func WithLogger(logger logger.ILogger) ChatOption {
 }
 
 type ChatNode struct {
-	name               string
-	systemPromptPrefix string
-	connectionStrings  []string
-	nativeLLM          *native.ChatLLM
-	tools              []llms.Tool
-	logger             logger.ILogger
+	name                 string
+	systemPromptPrefix   string
+	llmConnectionStrings []string
+	llm                  llms.Model
+	tools                []llms.Tool
+	logger               logger.ILogger
 }
 
 func (c *ChatNode) Name() string {
@@ -89,7 +89,7 @@ func (c *ChatNode) Run(ctx context.Context, currentState *state.State, streamFun
 		temperature = currentState.Metadata[TemperatureKey].(float64)
 	}
 
-	contentResponse, err := c.nativeLLM.GenerateContent(
+	contentResponse, err := c.llm.GenerateContent(
 		ctx,
 		messages,
 		llms.WithTools(c.tools),
@@ -154,12 +154,13 @@ func NewChatNode(options ...ChatOption) (*ChatNode, error) {
 		option(chat)
 	}
 
-	if chat.nativeLLM == nil {
-		llm, err := native.NewChatLLM(chat.connectionStrings, native.WithLogger(chat.logger))
+	if chat.llm == nil {
+		llm, err := native.NewChatLLM(chat.llmConnectionStrings, native.WithLogger(chat.logger))
 		if err != nil {
 			return nil, err
 		}
-		chat.nativeLLM = llm
+
+		chat.llm = llm
 	}
 
 	return chat, nil
