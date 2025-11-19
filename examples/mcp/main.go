@@ -45,7 +45,7 @@ func main() {
 	// create chat node
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	chat, err := chat.NewChatNode(
-		chat.WithLLM([]string{
+		chat.WithLLMConnectionStrings([]string{
 			fmt.Sprintf("openai;https://api.openai.com/v1;%s;gpt-4o-mini", apiKey),
 		}),
 		chat.WithTools(tools),

@@ -124,7 +124,7 @@ func main() {
 	// Create chat node using RAG context
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	chatNode, err := chat.NewChatNode(
-		chat.WithLLM([]string{
+		chat.WithLLMConnectionStrings([]string{
 			fmt.Sprintf("openai;https://api.openai.com/v1;%s;gpt-4o-mini", apiKey),
 		}),
 		chat.WithSystemPromptPrefix("You are an intelligent assistant, please answer user questions based on retrieved knowledge base information."),
