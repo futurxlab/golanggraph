@@ -9,6 +9,7 @@ import (
 	flowcontract "github.com/futurxlab/golanggraph/contract"
 	"github.com/futurxlab/golanggraph/edge"
 	"github.com/futurxlab/golanggraph/state"
+	"github.com/tmc/langchaingo/llms"
 
 	"github.com/futurxlab/golanggraph/logger"
 	libutils "github.com/futurxlab/golanggraph/utils"
@@ -54,6 +55,14 @@ func (f *Flow) Name() string {
 func (f *Flow) Exec(ctx context.Context, initState state.State, streamFunc flowcontract.StreamFunc) (state.State, error) {
 	if initState.GetThreadID() == "" {
 		initState.SetThreadID(uuid.New().String())
+	}
+
+	if initState.History == nil {
+		initState.History = make([]llms.MessageContent, 0)
+	}
+
+	if initState.Metadata == nil {
+		initState.Metadata = make(map[string]interface{})
 	}
 
 	if streamFunc == nil {
@@ -175,11 +184,11 @@ func (f *Flow) processNode(ctx context.Context, node string, copiedNodes map[str
 
 	if node != StartNode {
 		// 执行节点
+		fullState.SetNode(node)
 		if err := nodeEntry.node.Run(ctx, &fullState, streamFunc); err != nil {
 			return xerror.Wrap(err)
 		}
 
-		fullState.SetNode(node)
 		nodeEntry.completion = append(nodeEntry.completion, fullState)
 
 		if streamFuncErr := streamFunc(ctx, &flowcontract.FlowStreamEvent{

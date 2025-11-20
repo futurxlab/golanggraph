@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
 	flowcontract "github.com/futurxlab/golanggraph/contract"
@@ -17,6 +18,22 @@ import (
 const (
 	DefaultNodeName = "ToolsNode"
 )
+
+type ToolEvent struct {
+	ID     string
+	Type   string
+	Name   string
+	Input  string
+	Result string
+}
+
+func (e *ToolEvent) String() string {
+	json, err := json.Marshal(e)
+	if err != nil {
+		return ""
+	}
+	return string(json)
+}
 
 type Options struct {
 	Tools    []ITool
@@ -101,6 +118,18 @@ func (m *Tools) Run(ctx context.Context, currentState *state.State, streamFunc f
 			}
 
 			if _, ok := executedTools[toolCallPart.ID]; !ok {
+				toolEvent := ToolEvent{
+					ID:     toolCallPart.ID,
+					Type:   "tool_start",
+					Name:   toolCallPart.FunctionCall.Name,
+					Input:  toolCallPart.FunctionCall.Arguments,
+					Result: "",
+				}
+				_ = streamFunc(ctx, &flowcontract.FlowStreamEvent{
+					FullState: currentState,
+					Chunk:     toolEvent.String(),
+				})
+
 				if _, ok := groupedMessage[toolCallPart.FunctionCall.Name]; !ok {
 					groupedMessage[toolCallPart.FunctionCall.Name] = llms.MessageContent{
 						Role: llms.ChatMessageTypeAI,
@@ -153,7 +182,24 @@ func (m *Tools) Run(ctx context.Context, currentState *state.State, streamFunc f
 			}
 
 			mutex.Lock()
-			currentState.Merge(state)
+			// find tool response
+			for i := len(state.History) - 1; i >= 0; i-- {
+				message := state.History[i]
+				if message.Role == llms.ChatMessageTypeTool {
+					toolCallResponse := message.Parts[0].(llms.ToolCallResponse)
+					toolEvent := ToolEvent{
+						ID:     toolCallResponse.ToolCallID,
+						Type:   "tool_end",
+						Name:   toolCallResponse.Name,
+						Result: toolCallResponse.Content,
+					}
+					_ = streamFunc(ctx, &flowcontract.FlowStreamEvent{
+						FullState: currentState,
+						Chunk:     toolEvent.String(),
+					})
+					currentState.History = append(currentState.History, message)
+				}
+			}
 			mutex.Unlock()
 		})
 	}

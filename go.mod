@@ -33,4 +33,4 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/tmc/langchaingo v0.1.13 => github.com/leeif/langchaingo v0.0.2-futurx
+replace github.com/tmc/langchaingo v0.1.14 => github.com/leeif/langchaingo v0.0.3-futurx
