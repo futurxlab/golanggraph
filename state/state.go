@@ -88,3 +88,21 @@ func mergeMetadata(a, b map[string]interface{}) map[string]interface{} {
 
 	return result
 }
+
+func (s *State) GetLastResponse() string {
+	if len(s.History) == 0 {
+		return ""
+	}
+
+	for i := len(s.History) - 1; i >= 0; i-- {
+		if s.History[i].Role == llms.ChatMessageTypeAI {
+			for _, part := range s.History[i].Parts {
+				if textPart, ok := part.(llms.TextContent); ok {
+					return textPart.Text
+				}
+			}
+		}
+	}
+
+	return ""
+}
