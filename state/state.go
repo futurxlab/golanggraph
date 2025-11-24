@@ -106,3 +106,36 @@ func (s *State) GetLastResponse() string {
 
 	return ""
 }
+
+func (s *State) GetLastMessageRelatedTools() []llms.MessageContent {
+	if len(s.History) == 0 {
+		return nil
+	}
+
+	toolList := make([]llms.MessageContent, 0)
+
+	foundLastAIMessage := false
+
+	for i := len(s.History) - 1; i >= 0; i-- {
+		// AI Last Response
+		if !foundLastAIMessage && s.History[i].Role == llms.ChatMessageTypeAI {
+			foundLastAIMessage = true
+			continue
+		}
+
+		if foundLastAIMessage && s.History[i].Role == llms.ChatMessageTypeTool {
+			toolList = append(toolList, s.History[i])
+		} else if foundLastAIMessage && s.History[i].Role == llms.ChatMessageTypeAI {
+			toolList = append(toolList, s.History[i])
+		} else if foundLastAIMessage && s.History[i].Role == llms.ChatMessageTypeHuman {
+			break
+		}
+	}
+
+	// reverse tool list
+	for i := 0; i < len(toolList)/2; i++ {
+		toolList[i], toolList[len(toolList)-i-1] = toolList[len(toolList)-i-1], toolList[i]
+	}
+
+	return toolList
+}
