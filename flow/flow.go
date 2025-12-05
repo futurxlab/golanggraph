@@ -67,7 +67,6 @@ func (f *Flow) Exec(ctx context.Context, initState state.State, streamFunc flowc
 
 	if streamFunc == nil {
 		streamFunc = func(ctx context.Context, event *flowcontract.FlowStreamEvent) error {
-			f.logger.Infof(ctx, "flow processing event streamFunc empty %+v", event)
 			return nil
 		}
 	}

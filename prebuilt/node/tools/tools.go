@@ -108,12 +108,14 @@ func (m *Tools) Run(ctx context.Context, currentState *state.State, streamFunc f
 	executedTools := make(map[string]bool)
 
 	groupedMessage := make(map[string]llms.MessageContent)
+	notFoundTools := make([]llms.ToolCall, 0)
 
 	for _, part := range lastHistory.Parts {
 		if toolCallPart, ok := part.(llms.ToolCall); ok {
 
 			if _, ok := nameToTool[toolCallPart.FunctionCall.Name]; !ok {
 				m.logger.Warnf(ctx, "tool not found %s", toolCallPart.FunctionCall.Name)
+				notFoundTools = append(notFoundTools, toolCallPart)
 				continue
 			}
 
@@ -205,6 +207,17 @@ func (m *Tools) Run(ctx context.Context, currentState *state.State, streamFunc f
 	}
 
 	wg.Wait()
+
+	// append not found tools anyway to history to avoid api complaints
+	for _, tool := range notFoundTools {
+		currentState.History = append(currentState.History, llms.MessageContent{
+			Role: llms.ChatMessageTypeTool,
+			Parts: []llms.ContentPart{llms.ToolCallResponse{
+				ToolCallID: tool.ID,
+				Content:    "Tool not found",
+			}},
+		})
+	}
 
 	toolCount := 1
 	if currentState.Metadata["tool_count"] != nil {
