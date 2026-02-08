@@ -11,15 +11,15 @@ import (
 	"github.com/futurxlab/golanggraph/state"
 	"github.com/tmc/langchaingo/llms"
 
-	"github.com/futurxlab/golanggraph/logger"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/logger"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/xerror"
 	libutils "github.com/futurxlab/golanggraph/utils"
-	"github.com/futurxlab/golanggraph/xerror"
 
 	"github.com/google/uuid"
 )
 
-var (
-	FlowWorkerCount = 2
+const (
+	DefaultWorkerCount = 2
 )
 
 var (
@@ -46,6 +46,7 @@ type Flow struct {
 	checkpointer flowcontract.Checkpointer
 	graph        map[string][]edge.Edge
 	nodes        map[string]*nodeEntry
+	workerCount  int
 }
 
 func (f *Flow) Name() string {
@@ -71,7 +72,7 @@ func (f *Flow) Exec(ctx context.Context, initState state.State, streamFunc flowc
 		}
 	}
 
-	queue := make(chan workItem, FlowWorkerCount*10)
+	queue := make(chan workItem, f.workerCount*10)
 	var wg sync.WaitGroup
 
 	var fullState state.State
@@ -118,7 +119,7 @@ func (f *Flow) Exec(ctx context.Context, initState state.State, streamFunc flowc
 	}
 
 	// 启动工作线程
-	for i := 0; i < FlowWorkerCount; i++ {
+	for i := 0; i < f.workerCount; i++ {
 		libutils.SafeGo(ctx, f.logger, worker)
 	}
 
@@ -182,8 +183,25 @@ func (f *Flow) processNode(ctx context.Context, node string, copiedNodes map[str
 	}
 
 	if node != StartNode {
-		// 执行节点
 		fullState.SetNode(node)
+
+		if hook, ok := nodeEntry.node.(flowcontract.BeforeRunHook); ok {
+			if result := hook.BeforeRun(ctx, &fullState); result != nil {
+				if result.JumpToNode != "" {
+					nodeEntry.executing = false
+					wg.Add(1)
+					queue <- workItem{node: result.JumpToNode, state: fullState}
+
+					namespace := fullState.GetThreadID()
+					fullState.SetNextNodes([]string{result.JumpToNode})
+					if _, err := f.checkpointer.Save(ctx, namespace, &fullState); err != nil {
+						return xerror.Wrap(err)
+					}
+					return nil
+				}
+			}
+		}
+
 		if err := nodeEntry.node.Run(ctx, &fullState, streamFunc); err != nil {
 			return xerror.Wrap(err)
 		}
@@ -196,6 +214,22 @@ func (f *Flow) processNode(ctx context.Context, node string, copiedNodes map[str
 			f.logger.Errorf(ctx, "streaming failed state: %+v, error: %s", fullState, streamFuncErr)
 		}
 
+		if hook, ok := nodeEntry.node.(flowcontract.AfterRunHook); ok {
+			if result := hook.AfterRun(ctx, &fullState); result != nil {
+				if result.JumpToNode != "" {
+					nodeEntry.executing = false
+					wg.Add(1)
+					queue <- workItem{node: result.JumpToNode, state: fullState}
+
+					namespace := fullState.GetThreadID()
+					fullState.SetNextNodes([]string{result.JumpToNode})
+					if _, err := f.checkpointer.Save(ctx, namespace, &fullState); err != nil {
+						return xerror.Wrap(err)
+					}
+					return nil
+				}
+			}
+		}
 	}
 
 	nodeEntry.executing = false

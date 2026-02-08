@@ -1,3 +1,5 @@
+github.com/Yet-Another-AI-Project/kiwi-lib v0.0.0-20260208012011-ae783f30c2b4 h1:pOrV5f2XfCVeGgbFBIWFchPgoHp5FjwIHLDfyuzRV/8=
+github.com/Yet-Another-AI-Project/kiwi-lib v0.0.0-20260208012011-ae783f30c2b4/go.mod h1:QkIC+7HyHyZgLr23wlAZdBQfGRNDZQr8XCuag7dzvWk=
 github.com/avast/retry-go v3.0.0+incompatible h1:4SOWQ7Qs+oroOTQOYnAHqelpCO0biHSxpiH9JdtuBj0=
 github.com/avast/retry-go v3.0.0+incompatible/go.mod h1:XtSnn+n/sHqQIpZ10K1qAevBhOOCWBLXXy3hyiqqBrY=
 github.com/bahlo/generic-list-go v0.2.0 h1:5sz/EEAK+ls5wF+NeqDpk5+iNdMDXrh3z3nPnH1Wvgk=
@@ -38,8 +40,8 @@ github.com/kr/pty v1.1.1/go.mod h1:pFQYn66WHrOpPYNljwOMqo10TkYh1fy3cYio2l3bCsQ=
 github.com/kr/text v0.1.0/go.mod h1:4Jbv+DJW3UT/LiOwJeYQe1efqtUx/iVham/4vfdArNI=
 github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
-github.com/leeif/langchaingo v0.0.3-futurx h1:kaiIO/JnSl+dJ6sJRf5n8VgTHk4ilQrpspwwXbsF0fs=
-github.com/leeif/langchaingo v0.0.3-futurx/go.mod h1:aKKYXYoqhIDEv7WKdpnnCLRaqXic69cX9MnDUk72378=
+github.com/leeif/langchaingo v0.0.5-futurx h1:DxTVF6FOZQ4g7qjJhy8t+7VOs+jrWQDLBt7n5MxleII=
+github.com/leeif/langchaingo v0.0.5-futurx/go.mod h1:aKKYXYoqhIDEv7WKdpnnCLRaqXic69cX9MnDUk72378=
 github.com/mailru/easyjson v0.7.7 h1:UGYAvKxe3sBsEDzO8ZeWOSlIQfWFlxbzLZe7hwFURr0=
 github.com/mailru/easyjson v0.7.7/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
 github.com/mark3labs/mcp-go v0.37.0 h1:BywvZLPRT6Zx6mMG/MJfxLSZQkTGIcJSEGKsvr4DsoQ=

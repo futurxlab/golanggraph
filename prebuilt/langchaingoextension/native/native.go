@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/futurxlab/golanggraph/logger"
-	"github.com/futurxlab/golanggraph/xerror"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/logger"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/xerror"
 
 	"github.com/avast/retry-go"
 	"github.com/tmc/langchaingo/llms"

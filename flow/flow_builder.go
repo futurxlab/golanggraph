@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/Yet-Another-AI-Project/kiwi-lib/logger"
 	flowcontract "github.com/futurxlab/golanggraph/contract"
 	"github.com/futurxlab/golanggraph/edge"
-	"github.com/futurxlab/golanggraph/logger"
 	"github.com/futurxlab/golanggraph/state"
 )
 
@@ -17,6 +17,7 @@ type FlowBuilder struct {
 	dependencies map[string][]string
 	checkpointer flowcontract.Checkpointer
 	logger       logger.ILogger
+	workerCount  int
 }
 
 func (b *FlowBuilder) AddEdge(edge edge.Edge) *FlowBuilder {
@@ -37,6 +38,11 @@ func (b *FlowBuilder) SetName(name string) *FlowBuilder {
 
 func (b *FlowBuilder) SetCheckpointer(checkpointer flowcontract.Checkpointer) *FlowBuilder {
 	b.checkpointer = checkpointer
+	return b
+}
+
+func (b *FlowBuilder) SetWorkerCount(n int) *FlowBuilder {
+	b.workerCount = n
 	return b
 }
 
@@ -120,12 +126,18 @@ func (b *FlowBuilder) Compile() (*Flow, error) {
 	}
 
 	// 返回构建好的 Flow
+	workerCount := b.workerCount
+	if workerCount <= 0 {
+		workerCount = DefaultWorkerCount
+	}
+
 	return &Flow{
 		name:         b.name,
 		checkpointer: b.checkpointer,
 		logger:       b.logger,
 		graph:        graph,
 		nodes:        nodes,
+		workerCount:  workerCount,
 	}, nil
 }
 

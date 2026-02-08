@@ -5,7 +5,7 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"github.com/futurxlab/golanggraph/logger"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/logger"
 	"github.com/pkoukk/tiktoken-go"
 )
 

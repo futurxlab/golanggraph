@@ -8,9 +8,9 @@ import (
 	flowcontract "github.com/futurxlab/golanggraph/contract"
 	"github.com/futurxlab/golanggraph/state"
 
-	"github.com/futurxlab/golanggraph/logger"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/logger"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/xerror"
 	"github.com/futurxlab/golanggraph/utils"
-	"github.com/futurxlab/golanggraph/xerror"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -35,29 +35,35 @@ func (e *ToolEvent) String() string {
 	return string(json)
 }
 
-type Options struct {
-	Tools    []ITool
-	Logger   logger.ILogger
-	NodeName string
-}
-
-type Option func(*Options)
+type Option func(*Tools)
 
 func WithTools(tools []ITool) Option {
-	return func(o *Options) {
-		o.Tools = tools
+	return func(m *Tools) {
+		m.tools = tools
 	}
 }
 
 func WithLogger(logger logger.ILogger) Option {
-	return func(o *Options) {
-		o.Logger = logger
+	return func(m *Tools) {
+		m.logger = logger
 	}
 }
 
 func WithNodeName(name string) Option {
-	return func(o *Options) {
-		o.NodeName = name
+	return func(m *Tools) {
+		m.name = name
+	}
+}
+
+func WithBeforeRunHook(hooks ...func(ctx context.Context, currentState *state.State) *flowcontract.HookResult) Option {
+	return func(m *Tools) {
+		m.beforeRunHooks = append(m.beforeRunHooks, hooks...)
+	}
+}
+
+func WithAfterRunHook(hooks ...func(ctx context.Context, currentState *state.State) *flowcontract.HookResult) Option {
+	return func(m *Tools) {
+		m.afterRunHooks = append(m.afterRunHooks, hooks...)
 	}
 }
 
@@ -65,6 +71,14 @@ type Tools struct {
 	tools  []ITool
 	logger logger.ILogger
 	name   string
+
+	// hooks
+	beforeRunHooks []func(ctx context.Context, currentState *state.State) *flowcontract.HookResult
+	afterRunHooks  []func(ctx context.Context, currentState *state.State) *flowcontract.HookResult
+}
+
+func (m *Tools) ExportITools() []ITool {
+	return m.tools
 }
 
 func (m *Tools) ListTools(ctx context.Context) []llms.Tool {
@@ -82,18 +96,31 @@ func (m *Tools) Name() string {
 	return m.name
 }
 
+func (m *Tools) BeforeRun(ctx context.Context, currentState *state.State) *flowcontract.HookResult {
+	for _, hook := range m.beforeRunHooks {
+		if result := hook(ctx, currentState); result != nil {
+			return result
+		}
+	}
+	return nil
+}
+
+func (m *Tools) AfterRun(ctx context.Context, currentState *state.State) *flowcontract.HookResult {
+	for _, hook := range m.afterRunHooks {
+		result := hook(ctx, currentState)
+		if result != nil && result.JumpToNode != "" {
+			return result
+		}
+	}
+	return nil
+}
+
 func (m *Tools) Run(ctx context.Context, currentState *state.State, streamFunc flowcontract.StreamFunc) error {
 	if len(currentState.History) == 0 {
 		return nil
 	}
-
-	var systemMessage llms.MessageContent
-
-	for _, part := range currentState.History {
-		if part.Role == llms.ChatMessageTypeSystem {
-			systemMessage = part
-			break
-		}
+	if currentState.Metadata == nil {
+		currentState.Metadata = make(map[string]interface{})
 	}
 
 	lastHistory := currentState.History[len(currentState.History)-1]
@@ -106,107 +133,90 @@ func (m *Tools) Run(ctx context.Context, currentState *state.State, streamFunc f
 	}
 
 	executedTools := make(map[string]bool)
-
-	groupedMessage := make(map[string]llms.MessageContent)
 	notFoundTools := make([]llms.ToolCall, 0)
+	mutex := sync.Mutex{}
+	wg := sync.WaitGroup{}
 
 	for _, part := range lastHistory.Parts {
-		if toolCallPart, ok := part.(llms.ToolCall); ok {
+		toolCallPart, ok := part.(llms.ToolCall)
+		if !ok {
+			continue
+		}
 
-			if _, ok := nameToTool[toolCallPart.FunctionCall.Name]; !ok {
-				m.logger.Warnf(ctx, "tool not found %s", toolCallPart.FunctionCall.Name)
-				notFoundTools = append(notFoundTools, toolCallPart)
-				continue
+		if executedTools[toolCallPart.ID] {
+			continue
+		}
+		executedTools[toolCallPart.ID] = true
+
+		tool, ok := nameToTool[toolCallPart.FunctionCall.Name]
+		if !ok {
+			m.logger.Warnf(ctx, "tool not found %s", toolCallPart.FunctionCall.Name)
+			notFoundTools = append(notFoundTools, toolCallPart)
+			continue
+		}
+
+		if streamFunc != nil {
+			toolEvent := ToolEvent{
+				ID:     toolCallPart.ID,
+				Type:   "tool_start",
+				Name:   toolCallPart.FunctionCall.Name,
+				Input:  toolCallPart.FunctionCall.Arguments,
+				Result: "",
+			}
+			_ = streamFunc(ctx, &flowcontract.FlowStreamEvent{
+				FullState: currentState,
+				Chunk:     toolEvent.String(),
+			})
+		}
+
+		wg.Add(1)
+		toolCall := toolCallPart
+		utils.SafeGo(ctx, m.logger, func() {
+			defer wg.Done()
+
+			toolResponse, err := tool.Run(ctx, toolCall)
+			if err != nil {
+				m.logger.Errorf(ctx, "tool run failed %s", err)
+				toolResponse = llms.ToolCallResponse{
+					ToolCallID: toolCall.ID,
+					Name:       toolCall.FunctionCall.Name,
+					Content:    "[TOOL ERROR] " + err.Error(),
+				}
 			}
 
-			if _, ok := executedTools[toolCallPart.ID]; !ok {
-				toolEvent := ToolEvent{
-					ID:     toolCallPart.ID,
-					Type:   "tool_start",
-					Name:   toolCallPart.FunctionCall.Name,
-					Input:  toolCallPart.FunctionCall.Arguments,
-					Result: "",
-				}
+			response := llms.MessageContent{
+				Role:  llms.ChatMessageTypeTool,
+				Parts: []llms.ContentPart{toolResponse},
+			}
+
+			toolEvent := ToolEvent{
+				ID:     toolCall.ID,
+				Type:   "tool_end",
+				Name:   toolCall.FunctionCall.Name,
+				Result: extractToolResult(response),
+			}
+
+			mutex.Lock()
+			if streamFunc != nil {
 				_ = streamFunc(ctx, &flowcontract.FlowStreamEvent{
 					FullState: currentState,
 					Chunk:     toolEvent.String(),
 				})
-
-				if _, ok := groupedMessage[toolCallPart.FunctionCall.Name]; !ok {
-					groupedMessage[toolCallPart.FunctionCall.Name] = llms.MessageContent{
-						Role: llms.ChatMessageTypeAI,
-						Parts: []llms.ContentPart{
-							toolCallPart,
-						},
-					}
-				} else {
-					newParts := append(groupedMessage[toolCallPart.FunctionCall.Name].Parts, toolCallPart)
-					groupedMessage[toolCallPart.FunctionCall.Name] = llms.MessageContent{
-						Role:  llms.ChatMessageTypeAI,
-						Parts: newParts,
-					}
-				}
-			} else {
-				executedTools[toolCallPart.ID] = true
 			}
-		}
-	}
-
-	mutex := sync.Mutex{}
-
-	wg := sync.WaitGroup{}
-	for name, message := range groupedMessage {
-
-		tool, ok := nameToTool[name]
-		if !ok {
-			m.logger.Warnf(ctx, "tool not found %s", name)
-			continue
-		}
-
-		wg.Add(1)
-
-		utils.SafeGo(ctx, m.logger, func() {
-			defer wg.Done()
-			messages := make([]llms.MessageContent, 0)
-			if systemMessage.Role != "" {
-				messages = append(messages, systemMessage)
-			}
-			messages = append(messages, message)
-
-			state := &state.State{
-				History:  messages,
-				Metadata: currentState.Metadata,
-			}
-
-			if err := tool.Run(ctx, state, streamFunc); err != nil {
-				m.logger.Errorf(ctx, "tool run failed %s", err)
-				return
-			}
-
-			mutex.Lock()
-			// find tool response
-			for i := len(state.History) - 1; i >= 0; i-- {
-				message := state.History[i]
-				if message.Role == llms.ChatMessageTypeTool {
-					toolCallResponse := message.Parts[0].(llms.ToolCallResponse)
-					toolEvent := ToolEvent{
-						ID:     toolCallResponse.ToolCallID,
-						Type:   "tool_end",
-						Name:   toolCallResponse.Name,
-						Result: toolCallResponse.Content,
-					}
-					_ = streamFunc(ctx, &flowcontract.FlowStreamEvent{
-						FullState: currentState,
-						Chunk:     toolEvent.String(),
-					})
-					currentState.History = append(currentState.History, message)
-				}
-			}
+			currentState.History = append(currentState.History, response)
 			mutex.Unlock()
 		})
 	}
 
 	wg.Wait()
+
+	toolCount := 0
+	if existing, ok := currentState.Metadata["tool_count"]; ok {
+		if v, ok := existing.(int); ok {
+			toolCount = v
+		}
+	}
+	currentState.Metadata["tool_count"] = toolCount + 1
 
 	// append not found tools anyway to history to avoid api complaints
 	for _, tool := range notFoundTools {
@@ -219,13 +229,20 @@ func (m *Tools) Run(ctx context.Context, currentState *state.State, streamFunc f
 		})
 	}
 
-	toolCount := 1
-	if currentState.Metadata["tool_count"] != nil {
-		toolCount = currentState.Metadata["tool_count"].(int) + 1
-	}
-	currentState.Metadata["tool_count"] = toolCount
-
 	return nil
+}
+
+func extractToolResult(message llms.MessageContent) string {
+	for _, part := range message.Parts {
+		if toolCallResponse, ok := part.(llms.ToolCallResponse); ok {
+			return toolCallResponse.Content
+		}
+		if text, ok := part.(llms.TextContent); ok {
+			return text.Text
+		}
+	}
+
+	return ""
 }
 
 func NewTools(opts ...Option) (*Tools, error) {
@@ -234,17 +251,14 @@ func NewTools(opts ...Option) (*Tools, error) {
 		return nil, xerror.Wrap(err)
 	}
 
-	options := &Options{
-		Logger: defaultLogger,
+	tools := &Tools{
+		logger: defaultLogger,
+		tools:  make([]ITool, 0),
+		name:   DefaultNodeName,
 	}
-
 	for _, opt := range opts {
-		opt(options)
+		opt(tools)
 	}
 
-	return &Tools{
-		logger: options.Logger,
-		tools:  options.Tools,
-		name:   options.NodeName,
-	}, nil
+	return tools, nil
 }
