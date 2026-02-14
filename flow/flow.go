@@ -2,10 +2,13 @@ package flow
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/futurxlab/golanggraph/checkpointer"
 	flowcontract "github.com/futurxlab/golanggraph/contract"
 	"github.com/futurxlab/golanggraph/edge"
 	"github.com/futurxlab/golanggraph/state"
@@ -41,12 +44,14 @@ type nodeEntry struct {
 
 type Flow struct {
 	sync.Mutex
-	name         string
-	logger       logger.ILogger
-	checkpointer flowcontract.Checkpointer
-	graph        map[string][]edge.Edge
-	nodes        map[string]*nodeEntry
-	workerCount  int
+	name             string
+	logger           logger.ILogger
+	checkpointer     flowcontract.Checkpointer
+	graph            map[string][]edge.Edge
+	nodes            map[string]*nodeEntry
+	workerCount      int
+	step             int    // current superstep number
+	lastCheckpointID string // 最近一次checkpoint的ID，用于关联PendingWrite
 }
 
 func (f *Flow) Name() string {
@@ -71,6 +76,19 @@ func (f *Flow) Exec(ctx context.Context, initState state.State, streamFunc flowc
 			return nil
 		}
 	}
+
+	f.step = 0
+	initEntry := &checkpointer.CheckpointEntry{
+		ID:        uuid.New().String(),
+		Step:      f.step,
+		State:     &initState,
+		Source:    "input",
+		Timestamp: time.Now(),
+	}
+	if err := f.checkpointer.Save(ctx, initState.GetThreadID(), initEntry); err != nil {
+		return state.State{}, xerror.Wrap(err)
+	}
+	f.lastCheckpointID = initEntry.ID
 
 	queue := make(chan workItem, f.workerCount*10)
 	var wg sync.WaitGroup
@@ -141,8 +159,73 @@ func (f *Flow) Exec(ctx context.Context, initState state.State, streamFunc flowc
 	return fullState, nil
 }
 
-func (f *Flow) Resume(ctx context.Context, lastState state.State, streamFunc flowcontract.StreamFunc) error {
-	panic("not implemented")
+func (f *Flow) Resume(ctx context.Context, threadID string, streamFunc flowcontract.StreamFunc) (state.State, error) {
+	latest, err := f.checkpointer.GetLatest(ctx, threadID)
+	if err != nil {
+		return state.State{}, xerror.Wrap(fmt.Errorf("failed to get latest checkpoint: %w", err))
+	}
+
+	pendingWrites, err := f.checkpointer.GetPendingWrites(ctx, threadID, latest.ID)
+	if err != nil {
+		return state.State{}, xerror.Wrap(fmt.Errorf("failed to get pending writes: %w", err))
+	}
+
+	completedNodes := make(map[string]*state.State)
+	completedTaskIDs := make(map[string]struct{})
+	for _, pw := range pendingWrites {
+		completedNodes[pw.NodeName] = pw.State
+		completedTaskIDs[pw.TaskID] = struct{}{}
+	}
+
+	resumeState := *latest.State
+	f.step = latest.Step
+
+	nextNodes := resumeState.GetNextNodes()
+	if len(nextNodes) == 0 {
+		return resumeState, nil
+	}
+
+	for _, pw := range pendingWrites {
+		resumeState.Merge(pw.State)
+	}
+
+	remainingNodes := make([]string, 0, len(nextNodes))
+	for _, nextNode := range nextNodes {
+		taskID := generateTaskID(latest.ID, nextNode, f.step)
+		if _, ok := completedTaskIDs[taskID]; ok {
+			continue
+		}
+		if _, ok := completedNodes[nextNode]; ok {
+			continue
+		}
+		remainingNodes = append(remainingNodes, nextNode)
+	}
+	resumeState.SetNextNodes(remainingNodes)
+	if len(remainingNodes) == 0 {
+		return resumeState, nil
+	}
+
+	f.step++
+	resumeEntry := &checkpointer.CheckpointEntry{
+		ID:        uuid.New().String(),
+		ParentID:  latest.ID,
+		Step:      f.step,
+		State:     &resumeState,
+		Source:    "resume",
+		Timestamp: time.Now(),
+	}
+	if err := f.checkpointer.Save(ctx, threadID, resumeEntry); err != nil {
+		return state.State{}, xerror.Wrap(err)
+	}
+
+	return f.Exec(ctx, resumeState, streamFunc)
+}
+
+// generateTaskID 生成确定性任务ID，用于crash recovery时匹配已完成的节点
+func generateTaskID(checkpointID string, nodeName string, step int) string {
+	data := fmt.Sprintf("%s:%s:%d", checkpointID, nodeName, step)
+	hash := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(hash[:])
 }
 
 // processNode 处理单个节点，替代原来的递归execNode方法
@@ -192,11 +275,19 @@ func (f *Flow) processNode(ctx context.Context, node string, copiedNodes map[str
 					wg.Add(1)
 					queue <- workItem{node: result.JumpToNode, state: fullState}
 
-					namespace := fullState.GetThreadID()
 					fullState.SetNextNodes([]string{result.JumpToNode})
-					if _, err := f.checkpointer.Save(ctx, namespace, &fullState); err != nil {
+					f.step++
+					entry := &checkpointer.CheckpointEntry{
+						ID:        uuid.New().String(),
+						Step:      f.step,
+						State:     &fullState,
+						Source:    "loop",
+						Timestamp: time.Now(),
+					}
+					if err := f.checkpointer.Save(ctx, fullState.GetThreadID(), entry); err != nil {
 						return xerror.Wrap(err)
 					}
+					f.lastCheckpointID = entry.ID
 					return nil
 				}
 			}
@@ -207,6 +298,16 @@ func (f *Flow) processNode(ctx context.Context, node string, copiedNodes map[str
 		}
 
 		nodeEntry.completion = append(nodeEntry.completion, fullState)
+
+		taskID := generateTaskID(f.lastCheckpointID, node, f.step)
+		write := checkpointer.PendingWrite{
+			TaskID:   taskID,
+			NodeName: node,
+			State:    &fullState,
+		}
+		if err := f.checkpointer.SaveWrite(ctx, fullState.GetThreadID(), f.lastCheckpointID, write); err != nil {
+			f.logger.Warnf(ctx, "failed to save pending write for node %s: %s", node, err)
+		}
 
 		if streamFuncErr := streamFunc(ctx, &flowcontract.FlowStreamEvent{
 			FullState: &fullState,
@@ -221,11 +322,19 @@ func (f *Flow) processNode(ctx context.Context, node string, copiedNodes map[str
 					wg.Add(1)
 					queue <- workItem{node: result.JumpToNode, state: fullState}
 
-					namespace := fullState.GetThreadID()
 					fullState.SetNextNodes([]string{result.JumpToNode})
-					if _, err := f.checkpointer.Save(ctx, namespace, &fullState); err != nil {
+					f.step++
+					entry := &checkpointer.CheckpointEntry{
+						ID:        uuid.New().String(),
+						Step:      f.step,
+						State:     &fullState,
+						Source:    "loop",
+						Timestamp: time.Now(),
+					}
+					if err := f.checkpointer.Save(ctx, fullState.GetThreadID(), entry); err != nil {
 						return xerror.Wrap(err)
 					}
+					f.lastCheckpointID = entry.ID
 					return nil
 				}
 			}
@@ -262,11 +371,19 @@ func (f *Flow) processNode(ctx context.Context, node string, copiedNodes map[str
 	}
 
 	// 保存检查点
-	namespace := fullState.GetThreadID()
 	fullState.SetNextNodes(nextNodes)
-	if _, err := f.checkpointer.Save(ctx, namespace, &fullState); err != nil {
+	f.step++
+	entry := &checkpointer.CheckpointEntry{
+		ID:        uuid.New().String(),
+		Step:      f.step,
+		State:     &fullState,
+		Source:    "loop",
+		Timestamp: time.Now(),
+	}
+	if err := f.checkpointer.Save(ctx, fullState.GetThreadID(), entry); err != nil {
 		return xerror.Wrap(err)
 	}
+	f.lastCheckpointID = entry.ID
 
 	return nil
 }

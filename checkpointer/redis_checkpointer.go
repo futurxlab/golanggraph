@@ -6,120 +6,130 @@ import (
 	"fmt"
 
 	"github.com/Yet-Another-AI-Project/kiwi-lib/xerror"
-	"github.com/futurxlab/golanggraph/state"
-
-	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
-// RedisCheckpointer 实现了 Checkpointer 接口，使用 Redis 存储状态
+// RedisCheckpointer 实现了 Checkpointer 接口，使用 Redis 存储检查点
 type RedisCheckpointer struct {
 	client *redis.Client
 }
 
-// NewRedisCheckpointer 创建一个新的 RedisCheckpointer 实例
 func NewRedisCheckpointer(client *redis.Client) *RedisCheckpointer {
 	return &RedisCheckpointer{
 		client: client,
 	}
 }
 
-// getNamespaceKey 生成 Redis key
-func getNamespaceKey(namespace string) string {
-	return fmt.Sprintf("checkpointer:%s:states", namespace)
+func getEntriesKey(threadID string) string {
+	return fmt.Sprintf("checkpoint:%s:entries", threadID)
 }
 
-// getStateKey 生成单个状态的 Redis key
-func getStateKey(namespace, id string) string {
-	return fmt.Sprintf("checkpointer:%s:state:%s", namespace, id)
+func getEntryKey(threadID, checkpointID string) string {
+	return fmt.Sprintf("checkpoint:%s:entry:%s", threadID, checkpointID)
 }
 
-// Save 保存状态到 Redis
-func (c *RedisCheckpointer) Save(ctx context.Context, namespace string, state *state.State) (string, error) {
-	checkpointerID := uuid.New().String()
+func getWritesKey(threadID, checkpointID string) string {
+	return fmt.Sprintf("checkpoint:%s:writes:%s", threadID, checkpointID)
+}
 
-	// 序列化状态
-	stateData, err := json.Marshal(state)
+func (c *RedisCheckpointer) Save(ctx context.Context, threadID string, entry *CheckpointEntry) error {
+	data, err := json.Marshal(entry)
 	if err != nil {
-		return "", xerror.Wrap(fmt.Errorf("failed to marshal state: %w", err))
+		return xerror.Wrap(fmt.Errorf("failed to marshal checkpoint entry: %w", err))
 	}
 
-	// 使用 Redis Pipeline 来保证原子性
 	pipe := c.client.Pipeline()
-
-	// 保存状态数据
-	stateKey := getStateKey(namespace, checkpointerID)
-	pipe.Set(ctx, stateKey, stateData, 0)
-
-	// 将 ID 添加到有序列表
-	namespaceKey := getNamespaceKey(namespace)
-	pipe.RPush(ctx, namespaceKey, checkpointerID)
+	pipe.Set(ctx, getEntryKey(threadID, entry.ID), data, 0)
+	pipe.RPush(ctx, getEntriesKey(threadID), entry.ID)
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return "", xerror.Wrap(fmt.Errorf("failed to save state: %w", err))
+		return xerror.Wrap(fmt.Errorf("failed to save checkpoint: %w", err))
 	}
 
-	return checkpointerID, nil
+	return nil
 }
 
-// GetByID 通过 ID 获取状态
-func (c *RedisCheckpointer) GetByID(ctx context.Context, namespace string, checkpointerID string) (*state.State, error) {
-	stateKey := getStateKey(namespace, checkpointerID)
-	data, err := c.client.Get(ctx, stateKey).Bytes()
+func (c *RedisCheckpointer) SaveWrite(ctx context.Context, threadID string, checkpointID string, write PendingWrite) error {
+	data, err := json.Marshal(write)
+	if err != nil {
+		return xerror.Wrap(fmt.Errorf("failed to marshal pending write: %w", err))
+	}
+
+	if err := c.client.RPush(ctx, getWritesKey(threadID, checkpointID), data).Err(); err != nil {
+		return xerror.Wrap(fmt.Errorf("failed to save pending write: %w", err))
+	}
+
+	return nil
+}
+
+func (c *RedisCheckpointer) GetLatest(ctx context.Context, threadID string) (*CheckpointEntry, error) {
+	lastID, err := c.client.LIndex(ctx, getEntriesKey(threadID), -1).Result()
 	if err != nil {
 		if err == redis.Nil {
-			return nil, xerror.Wrap(fmt.Errorf("state not found for namespace %s and ID %s", namespace, checkpointerID))
+			return nil, fmt.Errorf("no checkpoints found for thread %s", threadID)
 		}
-		return nil, xerror.Wrap(fmt.Errorf("failed to get state: %w", err))
+		return nil, xerror.Wrap(fmt.Errorf("failed to get latest checkpoint ID: %w", err))
 	}
 
-	var state state.State
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal state: %w", err)
-	}
-
-	return &state, nil
+	return c.GetByID(ctx, threadID, lastID)
 }
 
-// GetLastest 获取最新的状态
-func (c *RedisCheckpointer) GetLastest(ctx context.Context, namespace string) (*state.State, error) {
-	namespaceKey := getNamespaceKey(namespace)
-
-	// 获取最后一个 ID
-	lastID, err := c.client.LIndex(ctx, namespaceKey, -1).Result()
+func (c *RedisCheckpointer) GetByID(ctx context.Context, threadID string, checkpointID string) (*CheckpointEntry, error) {
+	data, err := c.client.Get(ctx, getEntryKey(threadID, checkpointID)).Bytes()
 	if err != nil {
 		if err == redis.Nil {
-			return nil, xerror.Wrap(fmt.Errorf("no states found for namespace %s", namespace))
+			return nil, fmt.Errorf("checkpoint not found for thread %s and ID %s", threadID, checkpointID)
 		}
-		return nil, xerror.Wrap(fmt.Errorf("failed to get latest state ID: %w", err))
+		return nil, xerror.Wrap(fmt.Errorf("failed to get checkpoint: %w", err))
 	}
 
-	return c.GetByID(ctx, namespace, lastID)
+	var entry CheckpointEntry
+	if err := json.Unmarshal(data, &entry); err != nil {
+		return nil, xerror.Wrap(fmt.Errorf("failed to unmarshal checkpoint: %w", err))
+	}
+
+	return &entry, nil
 }
 
-// GetAll 获取所有状态
-func (c *RedisCheckpointer) GetAll(ctx context.Context, namespace string) ([]*state.State, error) {
-	namespaceKey := getNamespaceKey(namespace)
-
-	// 获取所有 ID
-	ids, err := c.client.LRange(ctx, namespaceKey, 0, -1).Result()
+func (c *RedisCheckpointer) List(ctx context.Context, threadID string) ([]*CheckpointEntry, error) {
+	ids, err := c.client.LRange(ctx, getEntriesKey(threadID), 0, -1).Result()
 	if err != nil {
-		return nil, xerror.Wrap(fmt.Errorf("failed to get state IDs: %w", err))
+		return nil, xerror.Wrap(fmt.Errorf("failed to get checkpoint IDs: %w", err))
 	}
 
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("no states found for namespace %s", namespace)
+		return nil, fmt.Errorf("no checkpoints found for thread %s", threadID)
 	}
 
-	states := make([]*state.State, len(ids))
+	entries := make([]*CheckpointEntry, len(ids))
 	for i, id := range ids {
-		state, err := c.GetByID(ctx, namespace, id)
+		entry, err := c.GetByID(ctx, threadID, id)
 		if err != nil {
-			return nil, xerror.Wrap(fmt.Errorf("failed to get state %s: %w", id, err))
+			return nil, xerror.Wrap(fmt.Errorf("failed to get checkpoint %s: %w", id, err))
 		}
-		states[i] = state
+		entries[i] = entry
 	}
 
-	return states, nil
+	return entries, nil
+}
+
+func (c *RedisCheckpointer) GetPendingWrites(ctx context.Context, threadID string, checkpointID string) ([]PendingWrite, error) {
+	items, err := c.client.LRange(ctx, getWritesKey(threadID, checkpointID), 0, -1).Result()
+	if err != nil {
+		return nil, xerror.Wrap(fmt.Errorf("failed to get pending writes: %w", err))
+	}
+
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	writes := make([]PendingWrite, len(items))
+	for i, item := range items {
+		if err := json.Unmarshal([]byte(item), &writes[i]); err != nil {
+			return nil, xerror.Wrap(fmt.Errorf("failed to unmarshal pending write: %w", err))
+		}
+	}
+
+	return writes, nil
 }

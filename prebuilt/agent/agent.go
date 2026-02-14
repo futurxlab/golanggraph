@@ -68,11 +68,37 @@ func WithSubAgent(name string, node flowcontract.Node) Option {
 	}
 }
 
+func WithBeforeModelHook(hooks ...HookFunc) Option {
+	return func(a *Agent) {
+		a.beforeModelHooks = append(a.beforeModelHooks, hooks...)
+	}
+}
+
+func WithAfterModelHook(hooks ...HookFunc) Option {
+	return func(a *Agent) {
+		a.afterModelHooks = append(a.afterModelHooks, hooks...)
+	}
+}
+
+func WithBeforeToolsHook(hooks ...HookFunc) Option {
+	return func(a *Agent) {
+		a.beforeToolsHooks = append(a.beforeToolsHooks, hooks...)
+	}
+}
+
+func WithAfterToolsHook(hooks ...HookFunc) Option {
+	return func(a *Agent) {
+		a.afterToolsHooks = append(a.afterToolsHooks, hooks...)
+	}
+}
+
 func WithLogger(l logger.ILogger) Option {
 	return func(a *Agent) {
 		a.logger = l
 	}
 }
+
+type HookFunc func(ctx context.Context, s *state.State) *flowcontract.HookResult
 
 type Agent struct {
 	name              string
@@ -85,6 +111,11 @@ type Agent struct {
 	responseValidator func(response string) error
 	subAgents         map[string]flowcontract.Node
 	logger            logger.ILogger
+
+	beforeModelHooks []HookFunc
+	afterModelHooks  []HookFunc
+	beforeToolsHooks []HookFunc
+	afterToolsHooks  []HookFunc
 }
 
 func (a *Agent) Name() string {
@@ -155,16 +186,33 @@ func (a *Agent) newModelNode() (*model.ModelNode, error) {
 		allTools = append(allTools, dt.Tools(context.Background())...)
 	}
 
+	beforeHooks := make([]func(ctx context.Context, currentState *state.State) *flowcontract.HookResult, 0)
+	afterHooks := make([]func(ctx context.Context, currentState *state.State) *flowcontract.HookResult, 0)
+
+	if a.contextWindow > 0 {
+		beforeHooks = append(beforeHooks, a.contextCompressHook())
+	}
+	for _, h := range a.beforeModelHooks {
+		beforeHooks = append(beforeHooks, h)
+	}
+
+	if a.responseValidator != nil {
+		afterHooks = append(afterHooks, a.responseValidationHook(a.modelNodeName()))
+	}
+	for _, h := range a.afterModelHooks {
+		afterHooks = append(afterHooks, h)
+	}
+
 	modelOpts := []model.ModelOption{
 		model.WithName(a.modelNodeName()),
 		model.WithLLM(a.model),
 		model.WithTools(allTools),
 	}
-	if a.contextWindow > 0 {
-		modelOpts = append(modelOpts, model.WithBeforeRunHook(a.contextCompressHook()))
+	if len(beforeHooks) > 0 {
+		modelOpts = append(modelOpts, model.WithBeforeRunHook(beforeHooks...))
 	}
-	if a.responseValidator != nil {
-		modelOpts = append(modelOpts, model.WithAfterRunHook(a.responseValidationHook(a.modelNodeName())))
+	if len(afterHooks) > 0 {
+		modelOpts = append(modelOpts, model.WithAfterRunHook(afterHooks...))
 	}
 
 	if a.logger != nil {
@@ -180,12 +228,29 @@ func (a *Agent) newToolsNode() (*tools.Tools, error) {
 		allITools = append(append([]tools.ITool{}, a.tools...), newDelegateTaskTool(a.subAgents))
 	}
 
+	beforeHooks := make([]func(ctx context.Context, currentState *state.State) *flowcontract.HookResult, 0)
+	afterHooks := make([]func(ctx context.Context, currentState *state.State) *flowcontract.HookResult, 0)
+
+	for _, h := range a.beforeToolsHooks {
+		beforeHooks = append(beforeHooks, h)
+	}
+
+	if a.maxToolCalls > 0 {
+		afterHooks = append(afterHooks, a.maxToolCallHook(a.modelNodeName()))
+	}
+	for _, h := range a.afterToolsHooks {
+		afterHooks = append(afterHooks, h)
+	}
+
 	toolsOpts := []tools.Option{
 		tools.WithNodeName(a.toolsNodeName()),
 		tools.WithTools(allITools),
 	}
-	if a.maxToolCalls > 0 {
-		toolsOpts = append(toolsOpts, tools.WithAfterRunHook(a.maxToolCallHook(a.modelNodeName())))
+	if len(beforeHooks) > 0 {
+		toolsOpts = append(toolsOpts, tools.WithBeforeRunHook(beforeHooks...))
+	}
+	if len(afterHooks) > 0 {
+		toolsOpts = append(toolsOpts, tools.WithAfterRunHook(afterHooks...))
 	}
 
 	if a.logger != nil {

@@ -69,7 +69,7 @@ func (n *hookTestNode) Name() string {
 	return "hook_test"
 }
 
-func (n *hookTestNode) BeforeRun(ctx context.Context, state *state.State) error {
+func (n *hookTestNode) BeforeRun(ctx context.Context, state *state.State) *flowcontract.HookResult {
 	*n.callOrder = append(*n.callOrder, "before")
 	n.beforeCalled = true
 	state.Metadata["before_key"] = "before_value"
@@ -89,20 +89,20 @@ func (n *hookTestNode) Run(ctx context.Context, state *state.State, streamFunc f
 	return nil
 }
 
-func (n *hookTestNode) AfterRun(ctx context.Context, state *state.State) (*flowcontract.HookResult, error) {
+func (n *hookTestNode) AfterRun(ctx context.Context, state *state.State) *flowcontract.HookResult {
 	*n.callOrder = append(*n.callOrder, "after")
 	n.afterCalled = true
 
 	beforeValue, beforeOK := state.Metadata["before_key"]
 	runValue, runOK := state.Metadata["run_key"]
 	if !beforeOK || beforeValue != "before_value" {
-		return nil, fmt.Errorf("before_key is not propagated to afterrun")
+		panic("before_key is not propagated to afterrun")
 	}
 	if !runOK || runValue != "run_value" {
-		return nil, fmt.Errorf("run_key is not propagated to afterrun")
+		panic("run_key is not propagated to afterrun")
 	}
 
-	return nil, nil
+	return nil
 }
 
 func TestFlow(t *testing.T) {
@@ -172,11 +172,11 @@ func (n *jumpSourceNode) Run(ctx context.Context, s *state.State, streamFunc flo
 	return nil
 }
 
-func (n *jumpSourceNode) AfterRun(ctx context.Context, s *state.State) (*flowcontract.HookResult, error) {
+func (n *jumpSourceNode) AfterRun(ctx context.Context, s *state.State) *flowcontract.HookResult {
 	if n.runCount == 1 {
-		return &flowcontract.HookResult{JumpToNode: "jump_source"}, nil
+		return &flowcontract.HookResult{JumpToNode: "jump_source"}
 	}
-	return nil, nil
+	return nil
 }
 
 func TestJumpToNode(t *testing.T) {
