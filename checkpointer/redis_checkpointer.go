@@ -64,15 +64,18 @@ func (c *RedisCheckpointer) SaveWrite(ctx context.Context, threadID string, chec
 }
 
 func (c *RedisCheckpointer) GetLatest(ctx context.Context, threadID string) (*CheckpointEntry, error) {
-	lastID, err := c.client.LIndex(ctx, getEntriesKey(threadID), -1).Result()
+	entries, err := c.List(ctx, threadID)
 	if err != nil {
-		if err == redis.Nil {
-			return nil, fmt.Errorf("no checkpoints found for thread %s", threadID)
-		}
-		return nil, xerror.Wrap(fmt.Errorf("failed to get latest checkpoint ID: %w", err))
+		return nil, err
 	}
 
-	return c.GetByID(ctx, threadID, lastID)
+	latest := entries[0]
+	for _, e := range entries[1:] {
+		if e.Step > latest.Step {
+			latest = e
+		}
+	}
+	return latest, nil
 }
 
 func (c *RedisCheckpointer) GetByID(ctx context.Context, threadID string, checkpointID string) (*CheckpointEntry, error) {

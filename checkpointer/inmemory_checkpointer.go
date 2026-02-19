@@ -48,7 +48,13 @@ func (c *InMemoryCheckpointer) GetLatest(ctx context.Context, threadID string) (
 		return nil, fmt.Errorf("no checkpoints found for thread %s", threadID)
 	}
 
-	return entries[len(entries)-1], nil
+	latest := entries[0]
+	for _, e := range entries[1:] {
+		if e.Step > latest.Step {
+			latest = e
+		}
+	}
+	return latest, nil
 }
 
 func (c *InMemoryCheckpointer) GetByID(ctx context.Context, threadID string, checkpointID string) (*CheckpointEntry, error) {
