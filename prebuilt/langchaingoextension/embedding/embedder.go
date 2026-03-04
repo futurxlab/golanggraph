@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/futurxlab/golanggraph/logger"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/logger"
 	"github.com/futurxlab/golanggraph/utils/cache"
 	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/llms/openai"

@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Yet-Another-AI-Project/kiwi-lib/logger"
 	"github.com/futurxlab/golanggraph/checkpointer"
 	flowcontract "github.com/futurxlab/golanggraph/contract"
 	"github.com/futurxlab/golanggraph/edge"
 	"github.com/futurxlab/golanggraph/flow"
-	"github.com/futurxlab/golanggraph/logger"
 	"github.com/futurxlab/golanggraph/prebuilt/edge/toolcondition"
-	"github.com/futurxlab/golanggraph/prebuilt/node/chat"
+	"github.com/futurxlab/golanggraph/prebuilt/langchaingoextension/native"
 	"github.com/futurxlab/golanggraph/prebuilt/node/mcptools"
+	"github.com/futurxlab/golanggraph/prebuilt/node/model"
 	"github.com/futurxlab/golanggraph/state"
 
 	"github.com/tmc/langchaingo/llms"
@@ -44,11 +45,16 @@ func main() {
 
 	// create chat node
 	apiKey := os.Getenv("OPENAI_API_KEY")
-	chat, err := chat.NewChatNode(
-		chat.WithLLMConnectionStrings([]string{
+
+	llm, err := native.NewChatLLM(
+		[]string{
 			fmt.Sprintf("openai;https://api.openai.com/v1;%s;gpt-4o-mini", apiKey),
-		}),
-		chat.WithTools(tools),
+		},
+	)
+
+	modelNode, err := model.NewModelNode(
+		model.WithLLM(llm),
+		model.WithTools(tools),
 	)
 
 	if err != nil {
@@ -59,15 +65,15 @@ func main() {
 	flow, err := flow.NewFlowBuilder(logger).
 		SetName("mcp_demo_flow").
 		SetCheckpointer(checkpointer.NewInMemoryCheckpointer()).
-		AddNode(chat).
+		AddNode(modelNode).
 		AddNode(mcpTools).
-		AddEdge(edge.Edge{From: flow.StartNode, To: chat.Name()}).
+		AddEdge(edge.Edge{From: flow.StartNode, To: modelNode.Name()}).
 		AddEdge(edge.Edge{
-			From:          chat.Name(),
-			ConditionalTo: []string{flow.EndNode, mcpTools.Name()},
-			ConditionFunc: toolcondition.NewToolCondition(1, mcpTools.Name(), flow.EndNode).Condition,
+			From:          modelNode.Name(),
+			ConditionalTo: []string{flow.EndNode, mcpTools.Name(), modelNode.Name()},
+			ConditionFunc: toolcondition.NewToolCondition(10, mcpTools.Name(), modelNode.Name(), flow.EndNode).Condition,
 		}).
-		AddEdge(edge.Edge{From: mcpTools.Name(), To: chat.Name()}).
+		AddEdge(edge.Edge{From: mcpTools.Name(), To: modelNode.Name()}).
 		Compile()
 
 	if err != nil {

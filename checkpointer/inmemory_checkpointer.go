@@ -4,94 +4,106 @@ import (
 	"context"
 	"fmt"
 	"sync"
-
-	"github.com/futurxlab/golanggraph/state"
-
-	"github.com/google/uuid"
 )
 
-// StateEntry 用于存储状态及其ID
-type StateEntry struct {
-	ID    string
-	State *state.State
-}
-
-// InMemoryCheckpointer 实现了 Checkpointer 接口，使用内存存储状态
+// InMemoryCheckpointer 实现了 Checkpointer 接口，使用内存存储检查点
 type InMemoryCheckpointer struct {
-	mu sync.RWMutex
-	// 使用 map 存储不同 namespace 的状态切片
-	// key 是 namespace，value 是有序的状态切片
-	states map[string][]StateEntry
+	mu            sync.RWMutex
+	checkpoints   map[string][]*CheckpointEntry
+	pendingWrites map[string]map[string][]PendingWrite
 }
 
-// NewInMemoryCheckpointer 创建一个新的 InMemoryCheckpointer 实例
 func NewInMemoryCheckpointer() *InMemoryCheckpointer {
 	return &InMemoryCheckpointer{
-		states: make(map[string][]StateEntry),
+		checkpoints:   make(map[string][]*CheckpointEntry),
+		pendingWrites: make(map[string]map[string][]PendingWrite),
 	}
 }
 
-// Save 保存状态到内存中
-func (c *InMemoryCheckpointer) Save(ctx context.Context, namespace string, state *state.State) (string, error) {
+func (c *InMemoryCheckpointer) Save(ctx context.Context, threadID string, entry *CheckpointEntry) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// 使用时间戳作为 checkpointerID
-	checkpointerID := uuid.New().String()
-	entry := StateEntry{
-		ID:    checkpointerID,
-		State: state,
-	}
-
-	// 将新状态追加到切片末尾
-	c.states[namespace] = append(c.states[namespace], entry)
-
-	return checkpointerID, nil
+	c.checkpoints[threadID] = append(c.checkpoints[threadID], entry)
+	return nil
 }
 
-// GetByID 通过 ID 获取状态
-func (c *InMemoryCheckpointer) GetByID(ctx context.Context, namespace string, checkpointerID string) (*state.State, error) {
+func (c *InMemoryCheckpointer) SaveWrite(ctx context.Context, threadID string, checkpointID string, write PendingWrite) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.pendingWrites[threadID] == nil {
+		c.pendingWrites[threadID] = make(map[string][]PendingWrite)
+	}
+	c.pendingWrites[threadID][checkpointID] = append(c.pendingWrites[threadID][checkpointID], write)
+	return nil
+}
+
+func (c *InMemoryCheckpointer) GetLatest(ctx context.Context, threadID string) (*CheckpointEntry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if states, exists := c.states[namespace]; exists {
-		for _, entry := range states {
-			if entry.ID == checkpointerID {
-				return entry.State, nil
-			}
-		}
+	entries, exists := c.checkpoints[threadID]
+	if !exists || len(entries) == 0 {
+		return nil, fmt.Errorf("no checkpoints found for thread %s", threadID)
 	}
 
-	return nil, fmt.Errorf("state not found for namespace %s and ID %s", namespace, checkpointerID)
+	latest := entries[0]
+	for _, e := range entries[1:] {
+		if e.Step > latest.Step {
+			latest = e
+		}
+	}
+	return latest, nil
 }
 
-// GetLastest 获取最新的状态
-func (c *InMemoryCheckpointer) GetLastest(ctx context.Context, namespace string) (*state.State, error) {
+func (c *InMemoryCheckpointer) GetByID(ctx context.Context, threadID string, checkpointID string) (*CheckpointEntry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if states, exists := c.states[namespace]; exists {
-		if len(states) > 0 {
-			// 返回切片中的最后一个状态
-			return states[len(states)-1].State, nil
+	entries, exists := c.checkpoints[threadID]
+	if !exists {
+		return nil, fmt.Errorf("checkpoint not found for thread %s and ID %s", threadID, checkpointID)
+	}
+
+	for _, entry := range entries {
+		if entry.ID == checkpointID {
+			return entry, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no states found for namespace %s", namespace)
+	return nil, fmt.Errorf("checkpoint not found for thread %s and ID %s", threadID, checkpointID)
 }
 
-// GetAll 获取所有状态
-func (c *InMemoryCheckpointer) GetAll(ctx context.Context, namespace string) ([]*state.State, error) {
+func (c *InMemoryCheckpointer) List(ctx context.Context, threadID string) ([]*CheckpointEntry, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	if states, exists := c.states[namespace]; exists {
-		result := make([]*state.State, len(states))
-		for i, entry := range states {
-			result[i] = entry.State
-		}
-		return result, nil
+	entries, exists := c.checkpoints[threadID]
+	if !exists || len(entries) == 0 {
+		return nil, fmt.Errorf("no checkpoints found for thread %s", threadID)
 	}
 
-	return nil, fmt.Errorf("no states found for namespace %s", namespace)
+	result := make([]*CheckpointEntry, len(entries))
+	copy(result, entries)
+	return result, nil
+}
+
+func (c *InMemoryCheckpointer) GetPendingWrites(ctx context.Context, threadID string, checkpointID string) ([]PendingWrite, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	threadWrites, exists := c.pendingWrites[threadID]
+	if !exists {
+		return nil, nil
+	}
+
+	writes := threadWrites[checkpointID]
+	if len(writes) == 0 {
+		return nil, nil
+	}
+
+	result := make([]PendingWrite, len(writes))
+	copy(result, writes)
+	return result, nil
 }

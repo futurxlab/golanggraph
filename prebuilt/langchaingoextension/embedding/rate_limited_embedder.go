@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/avast/retry-go"
-	"github.com/futurxlab/golanggraph/logger"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/logger"
 	"github.com/futurxlab/golanggraph/utils"
 	"github.com/tmc/langchaingo/embeddings"
 	"golang.org/x/time/rate"

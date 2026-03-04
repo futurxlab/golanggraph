@@ -2,24 +2,27 @@ package flow
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/futurxlab/golanggraph/checkpointer"
 	flowcontract "github.com/futurxlab/golanggraph/contract"
 	"github.com/futurxlab/golanggraph/edge"
 	"github.com/futurxlab/golanggraph/state"
 	"github.com/tmc/langchaingo/llms"
 
-	"github.com/futurxlab/golanggraph/logger"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/logger"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/xerror"
 	libutils "github.com/futurxlab/golanggraph/utils"
-	"github.com/futurxlab/golanggraph/xerror"
 
 	"github.com/google/uuid"
 )
 
-var (
-	FlowWorkerCount = 2
+const (
+	DefaultWorkerCount = 2
 )
 
 var (
@@ -33,19 +36,37 @@ type workItem struct {
 }
 
 type nodeEntry struct {
+	mu           sync.Mutex
 	executing    bool
 	node         flowcontract.Node
 	dependencies []string
 	completion   []state.State
 }
 
+// cloneStateForWorkItem creates a shallow copy of the state with a deep-copied Metadata map
+// to prevent concurrent map access when multiple goroutines process different nodes.
+func cloneStateForWorkItem(s state.State) state.State {
+	if s.Metadata == nil {
+		return s
+	}
+	m := make(map[string]interface{}, len(s.Metadata))
+	for k, v := range s.Metadata {
+		m[k] = v
+	}
+	s.Metadata = m
+	return s
+}
+
 type Flow struct {
 	sync.Mutex
-	name         string
-	logger       logger.ILogger
-	checkpointer flowcontract.Checkpointer
-	graph        map[string][]edge.Edge
-	nodes        map[string]*nodeEntry
+	name             string
+	logger           logger.ILogger
+	checkpointer     flowcontract.Checkpointer
+	graph            map[string][]edge.Edge
+	nodes            map[string]*nodeEntry
+	workerCount      int
+	step             int    // current superstep number
+	lastCheckpointID string // 最近一次checkpoint的ID，用于关联PendingWrite
 }
 
 func (f *Flow) Name() string {
@@ -71,14 +92,43 @@ func (f *Flow) Exec(ctx context.Context, initState state.State, streamFunc flowc
 		}
 	}
 
-	queue := make(chan workItem, FlowWorkerCount*10)
+	f.step = 0
+	initEntry := &checkpointer.CheckpointEntry{
+		ID:        uuid.New().String(),
+		Step:      f.step,
+		State:     &initState,
+		Source:    "input",
+		Timestamp: time.Now(),
+	}
+	if err := f.checkpointer.Save(ctx, initState.GetThreadID(), initEntry); err != nil {
+		return state.State{}, xerror.Wrap(err)
+	}
+	f.lastCheckpointID = initEntry.ID
+
+	return f.execFromNodes(ctx, initState, []string{StartNode}, streamFunc)
+}
+
+// execFromNodes runs the flow execution loop starting from the given entry nodes.
+// For normal Exec, startNodes is [__start__]. For ResumeWithValue, startNodes is the interrupted node(s).
+func (f *Flow) execFromNodes(ctx context.Context, initState state.State, startNodes []string, streamFunc flowcontract.StreamFunc) (state.State, error) {
+	if streamFunc == nil {
+		streamFunc = func(ctx context.Context, event *flowcontract.FlowStreamEvent) error {
+			return nil
+		}
+	}
+
+	queue := make(chan workItem, f.workerCount*10)
 	var wg sync.WaitGroup
 
 	var fullState state.State
+	var fullStateMu sync.Mutex
 
-	// 错误处理
 	var firstErr error
+	var errMu sync.Mutex
 	var errOnce sync.Once
+
+	var closeOnce sync.Once
+	closeQueue := func() { closeOnce.Do(func() { close(queue) }) }
 
 	// copy nodes
 	copiedNodes := make(map[string]*nodeEntry)
@@ -104,44 +154,196 @@ func (f *Flow) Exec(ctx context.Context, initState state.State, streamFunc flowc
 				}
 
 				if work.node == EndNode {
+					fullStateMu.Lock()
 					fullState = work.state
+					fullStateMu.Unlock()
 				}
 
 				if err := f.processNode(ctx, work.node, copiedNodes, work.state, queue, &wg, streamFunc); err != nil {
-					errOnce.Do(func() {
-						firstErr = err
-						close(queue)
-					})
+					if _, ok := flowcontract.IsInterrupt(err); ok {
+						errOnce.Do(func() {
+							errMu.Lock()
+							firstErr = err
+							errMu.Unlock()
+							closeQueue()
+						})
+					} else {
+						errOnce.Do(func() {
+							errMu.Lock()
+							firstErr = err
+							errMu.Unlock()
+							closeQueue()
+						})
+					}
 				}
 			}
 		}
 	}
 
 	// 启动工作线程
-	for i := 0; i < FlowWorkerCount; i++ {
+	for i := 0; i < f.workerCount; i++ {
 		libutils.SafeGo(ctx, f.logger, worker)
 	}
 
 	// 添加起始节点到队列
-	wg.Add(1)
-	queue <- workItem{node: StartNode, state: initState}
+	for _, startNode := range startNodes {
+		wg.Add(1)
+		queue <- workItem{node: startNode, state: cloneStateForWorkItem(initState)}
+	}
 
 	// 等待所有工作完成或出错
 	wg.Wait()
 
-	if firstErr != nil {
-		return state.State{}, xerror.Wrap(firstErr)
+	errMu.Lock()
+	err := firstErr
+	errMu.Unlock()
+	if err != nil {
+		if _, ok := flowcontract.IsInterrupt(err); ok {
+			closeQueue()
+			fullStateMu.Lock()
+			interruptState := fullState
+			fullStateMu.Unlock()
+
+			if interruptState.GetThreadID() == "" {
+				latest, cpErr := f.checkpointer.GetLatest(ctx, initState.GetThreadID())
+				if cpErr == nil && latest != nil && latest.State != nil {
+					interruptState = *latest.State
+				} else {
+					interruptState = initState
+				}
+			}
+
+			return interruptState, err
+		}
+		return state.State{}, xerror.Wrap(err)
 	}
 
 	f.logger.Infof(ctx, "flow finished")
 
-	close(queue)
+	closeQueue()
 
-	return fullState, nil
+	fullStateMu.Lock()
+	result := fullState
+	fullStateMu.Unlock()
+
+	return result, nil
 }
 
-func (f *Flow) Resume(ctx context.Context, lastState state.State, streamFunc flowcontract.StreamFunc) error {
-	panic("not implemented")
+func (f *Flow) Resume(ctx context.Context, threadID string, streamFunc flowcontract.StreamFunc) (state.State, error) {
+	latest, err := f.checkpointer.GetLatest(ctx, threadID)
+	if err != nil {
+		return state.State{}, xerror.Wrap(fmt.Errorf("failed to get latest checkpoint: %w", err))
+	}
+
+	pendingWrites, err := f.checkpointer.GetPendingWrites(ctx, threadID, latest.ID)
+	if err != nil {
+		return state.State{}, xerror.Wrap(fmt.Errorf("failed to get pending writes: %w", err))
+	}
+
+	completedNodes := make(map[string]*state.State)
+	completedTaskIDs := make(map[string]struct{})
+	for _, pw := range pendingWrites {
+		completedNodes[pw.NodeName] = pw.State
+		completedTaskIDs[pw.TaskID] = struct{}{}
+	}
+
+	resumeState := *latest.State
+	f.step = latest.Step
+
+	nextNodes := resumeState.GetNextNodes()
+	if len(nextNodes) == 0 {
+		return resumeState, nil
+	}
+
+	for _, pw := range pendingWrites {
+		resumeState.Merge(pw.State)
+	}
+
+	remainingNodes := make([]string, 0, len(nextNodes))
+	for _, nextNode := range nextNodes {
+		taskID := generateTaskID(latest.ID, nextNode, f.step)
+		if _, ok := completedTaskIDs[taskID]; ok {
+			continue
+		}
+		if _, ok := completedNodes[nextNode]; ok {
+			continue
+		}
+		remainingNodes = append(remainingNodes, nextNode)
+	}
+	resumeState.SetNextNodes(remainingNodes)
+	if len(remainingNodes) == 0 {
+		return resumeState, nil
+	}
+
+	f.step++
+	resumeEntry := &checkpointer.CheckpointEntry{
+		ID:        uuid.New().String(),
+		ParentID:  latest.ID,
+		Step:      f.step,
+		State:     &resumeState,
+		Source:    "resume",
+		Timestamp: time.Now(),
+	}
+	if err := f.checkpointer.Save(ctx, threadID, resumeEntry); err != nil {
+		return state.State{}, xerror.Wrap(err)
+	}
+
+	return f.Exec(ctx, resumeState, streamFunc)
+}
+
+func (f *Flow) ResumeWithValue(ctx context.Context, threadID string, resumeValue interface{}, streamFunc flowcontract.StreamFunc) (state.State, error) {
+	latest, err := f.checkpointer.GetLatest(ctx, threadID)
+	if err != nil {
+		return state.State{}, xerror.Wrap(fmt.Errorf("failed to get latest checkpoint: %w", err))
+	}
+
+	if !latest.State.IsInterrupted() {
+		return state.State{}, xerror.New(fmt.Sprintf("thread %s is not interrupted", threadID))
+	}
+
+	pendingWrites, err := f.checkpointer.GetPendingWrites(ctx, threadID, latest.ID)
+	if err != nil {
+		return state.State{}, xerror.Wrap(fmt.Errorf("failed to get pending writes: %w", err))
+	}
+
+	resumeState := *latest.State
+	f.step = latest.Step
+
+	for _, pw := range pendingWrites {
+		resumeState.Merge(pw.State)
+	}
+
+	resumeState.SetResumeValue(resumeValue)
+	resumeState.SetInterrupted(false)
+	resumeState.SetInterruptPayload(nil)
+
+	startNodes := resumeState.GetNextNodes()
+	if len(startNodes) == 0 {
+		return state.State{}, xerror.New("no interrupted node to resume from")
+	}
+
+	f.step++
+	resumeEntry := &checkpointer.CheckpointEntry{
+		ID:        uuid.New().String(),
+		ParentID:  latest.ID,
+		Step:      f.step,
+		State:     &resumeState,
+		Source:    "resume",
+		Timestamp: time.Now(),
+	}
+	if err := f.checkpointer.Save(ctx, threadID, resumeEntry); err != nil {
+		return state.State{}, xerror.Wrap(err)
+	}
+	f.lastCheckpointID = resumeEntry.ID
+
+	return f.execFromNodes(ctx, resumeState, startNodes, streamFunc)
+}
+
+// generateTaskID 生成确定性任务ID，用于crash recovery时匹配已完成的节点
+func generateTaskID(checkpointID string, nodeName string, step int) string {
+	data := fmt.Sprintf("%s:%s:%d", checkpointID, nodeName, step)
+	hash := sha256.Sum256([]byte(data))
+	return hex.EncodeToString(hash[:])
 }
 
 // processNode 处理单个节点，替代原来的递归execNode方法
@@ -182,13 +384,88 @@ func (f *Flow) processNode(ctx context.Context, node string, copiedNodes map[str
 	}
 
 	if node != StartNode {
-		// 执行节点
 		fullState.SetNode(node)
+
+		if hook, ok := nodeEntry.node.(flowcontract.BeforeRunHook); ok {
+			if result := hook.BeforeRun(ctx, &fullState); result != nil {
+				if result.JumpToNode != "" {
+					f.Lock()
+					nodeEntry.executing = false
+					f.Unlock()
+					wg.Add(1)
+					queue <- workItem{node: result.JumpToNode, state: cloneStateForWorkItem(fullState)}
+
+					fullState.SetNextNodes([]string{result.JumpToNode})
+					f.Lock()
+					f.step++
+					step := f.step
+					f.Unlock()
+					entry := &checkpointer.CheckpointEntry{
+						ID:        uuid.New().String(),
+						Step:      step,
+						State:     &fullState,
+						Source:    "loop",
+						Timestamp: time.Now(),
+					}
+					if err := f.checkpointer.Save(ctx, fullState.GetThreadID(), entry); err != nil {
+						return xerror.Wrap(err)
+					}
+					f.Lock()
+					f.lastCheckpointID = entry.ID
+					f.Unlock()
+					return nil
+				}
+			}
+		}
+
 		if err := nodeEntry.node.Run(ctx, &fullState, streamFunc); err != nil {
+			if interruptErr, ok := flowcontract.IsInterrupt(err); ok {
+				fullState.SetInterruptPayload(interruptErr.Payload)
+				fullState.SetInterrupted(true)
+				fullState.SetNextNodes([]string{node})
+
+				f.Lock()
+				f.step++
+				step := f.step
+				f.Unlock()
+
+				entry := &checkpointer.CheckpointEntry{
+					ID:        uuid.New().String(),
+					Step:      step,
+					State:     &fullState,
+					Source:    "interrupt",
+					Timestamp: time.Now(),
+				}
+				if err := f.checkpointer.Save(ctx, fullState.GetThreadID(), entry); err != nil {
+					return xerror.Wrap(err)
+				}
+
+				f.Lock()
+				f.lastCheckpointID = entry.ID
+				f.Unlock()
+
+				return interruptErr
+			}
 			return xerror.Wrap(err)
 		}
 
+		nodeEntry.mu.Lock()
 		nodeEntry.completion = append(nodeEntry.completion, fullState)
+		nodeEntry.mu.Unlock()
+
+		f.Lock()
+		checkpointID := f.lastCheckpointID
+		step := f.step
+		f.Unlock()
+		taskID := generateTaskID(checkpointID, node, step)
+		write := checkpointer.PendingWrite{
+			TaskID:   taskID,
+			NodeName: node,
+			State:    &fullState,
+		}
+		if err := f.checkpointer.SaveWrite(ctx, fullState.GetThreadID(), checkpointID, write); err != nil {
+			f.logger.Warnf(ctx, "failed to save pending write for node %s: %s", node, err)
+		}
 
 		if streamFuncErr := streamFunc(ctx, &flowcontract.FlowStreamEvent{
 			FullState: &fullState,
@@ -196,9 +473,42 @@ func (f *Flow) processNode(ctx context.Context, node string, copiedNodes map[str
 			f.logger.Errorf(ctx, "streaming failed state: %+v, error: %s", fullState, streamFuncErr)
 		}
 
+		if hook, ok := nodeEntry.node.(flowcontract.AfterRunHook); ok {
+			if result := hook.AfterRun(ctx, &fullState); result != nil {
+				if result.JumpToNode != "" {
+					f.Lock()
+					nodeEntry.executing = false
+					f.Unlock()
+					wg.Add(1)
+					queue <- workItem{node: result.JumpToNode, state: cloneStateForWorkItem(fullState)}
+
+					fullState.SetNextNodes([]string{result.JumpToNode})
+					f.Lock()
+					f.step++
+					step := f.step
+					f.Unlock()
+					entry := &checkpointer.CheckpointEntry{
+						ID:        uuid.New().String(),
+						Step:      step,
+						State:     &fullState,
+						Source:    "loop",
+						Timestamp: time.Now(),
+					}
+					if err := f.checkpointer.Save(ctx, fullState.GetThreadID(), entry); err != nil {
+						return xerror.Wrap(err)
+					}
+					f.Lock()
+					f.lastCheckpointID = entry.ID
+					f.Unlock()
+					return nil
+				}
+			}
+		}
 	}
 
+	f.Lock()
 	nodeEntry.executing = false
+	f.Unlock()
 
 	nextNodes := make([]string, 0)
 
@@ -224,15 +534,28 @@ func (f *Flow) processNode(ctx context.Context, node string, copiedNodes map[str
 		nextNodes = append(nextNodes, nextNode)
 
 		wg.Add(1)
-		queue <- workItem{node: nextNode, state: fullState}
+		queue <- workItem{node: nextNode, state: cloneStateForWorkItem(fullState)}
 	}
 
 	// 保存检查点
-	namespace := fullState.GetThreadID()
 	fullState.SetNextNodes(nextNodes)
-	if _, err := f.checkpointer.Save(ctx, namespace, &fullState); err != nil {
+	f.Lock()
+	f.step++
+	step := f.step
+	f.Unlock()
+	entry := &checkpointer.CheckpointEntry{
+		ID:        uuid.New().String(),
+		Step:      step,
+		State:     &fullState,
+		Source:    "loop",
+		Timestamp: time.Now(),
+	}
+	if err := f.checkpointer.Save(ctx, fullState.GetThreadID(), entry); err != nil {
 		return xerror.Wrap(err)
 	}
+	f.Lock()
+	f.lastCheckpointID = entry.ID
+	f.Unlock()
 
 	return nil
 }
@@ -242,31 +565,49 @@ func (f *Flow) waitDependencies(ctx context.Context, copiedNodes map[string]*nod
 	wg.Add(len(dependencies))
 
 	timer := time.NewTimer(time.Minute * 2)
+	defer timer.Stop()
 
-	var err error
-	var states []state.State
+	timeoutCh := make(chan struct{})
+	doneCh := make(chan struct{})
+	go func() {
+		select {
+		case <-timer.C:
+			close(timeoutCh)
+		case <-doneCh:
+		}
+	}()
+	defer close(doneCh)
 
-	for _, dependency := range dependencies {
+	states := make([]state.State, len(dependencies))
+	var firstErr error
+	var errOnce sync.Once
+
+	for i, dependency := range dependencies {
+		i, dependency := i, dependency
 		libutils.SafeGo(ctx, f.logger, func() {
 			defer wg.Done()
 			f.logger.Infof(ctx, "waiting for dependency %s", dependency)
 			for {
 				select {
 				case <-ctx.Done():
-					err = xerror.New("context canceled")
+					errOnce.Do(func() { firstErr = xerror.New("context canceled") })
 					return
-				case <-timer.C:
-					err = xerror.New(fmt.Sprintf("dependency node %s timeout", dependency))
+				case <-timeoutCh:
+					errOnce.Do(func() { firstErr = xerror.New(fmt.Sprintf("dependency node %s timeout", dependency)) })
 					return
 				default:
 				}
 
-				if len(copiedNodes[dependency].completion) > 0 {
-					firstState := copiedNodes[dependency].completion[0]
-					states = append(states, firstState)
-					copiedNodes[dependency].completion = copiedNodes[dependency].completion[1:]
+				dep := copiedNodes[dependency]
+				dep.mu.Lock()
+				if len(dep.completion) > 0 {
+					firstState := dep.completion[0]
+					dep.completion = dep.completion[1:]
+					dep.mu.Unlock()
+					states[i] = firstState
 					return
 				}
+				dep.mu.Unlock()
 
 				time.Sleep(time.Second * 2)
 			}
@@ -275,8 +616,8 @@ func (f *Flow) waitDependencies(ctx context.Context, copiedNodes map[string]*nod
 
 	wg.Wait()
 
-	if err != nil {
-		return nil, err
+	if firstErr != nil {
+		return nil, firstErr
 	}
 
 	return states, nil

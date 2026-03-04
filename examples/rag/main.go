@@ -6,14 +6,15 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Yet-Another-AI-Project/kiwi-lib/logger"
+	"github.com/Yet-Another-AI-Project/kiwi-lib/xerror"
 	"github.com/futurxlab/golanggraph/checkpointer"
 	flowcontract "github.com/futurxlab/golanggraph/contract"
 	"github.com/futurxlab/golanggraph/edge"
 	"github.com/futurxlab/golanggraph/flow"
-	"github.com/futurxlab/golanggraph/logger"
-	"github.com/futurxlab/golanggraph/prebuilt/node/chat"
+	"github.com/futurxlab/golanggraph/prebuilt/langchaingoextension/native"
+	"github.com/futurxlab/golanggraph/prebuilt/node/model"
 	"github.com/futurxlab/golanggraph/state"
-	"github.com/futurxlab/golanggraph/xerror"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -121,14 +122,16 @@ func main() {
 	// Create RAG node
 	ragNode := NewRAGNode("knowledge_search")
 
-	// Create chat node using RAG context
+	// Create model node using RAG context
 	apiKey := os.Getenv("OPENAI_API_KEY")
-	chatNode, err := chat.NewChatNode(
-		chat.WithLLMConnectionStrings([]string{
+	llm, err := native.NewChatLLM(
+		[]string{
 			fmt.Sprintf("openai;https://api.openai.com/v1;%s;gpt-4o-mini", apiKey),
-		}),
-		chat.WithSystemPromptPrefix("You are an intelligent assistant, please answer user questions based on retrieved knowledge base information."),
-		chat.WithName("chat_with_rag"),
+		},
+	)
+	modelNode, err := model.NewModelNode(
+		model.WithLLM(llm),
+		model.WithName("chat_with_rag"),
 	)
 
 	// Create RAG flow
@@ -136,10 +139,10 @@ func main() {
 		SetName("rag_demo_flow").
 		SetCheckpointer(checkpointer.NewInMemoryCheckpointer()).
 		AddNode(ragNode).
-		AddNode(chatNode).
+		AddNode(modelNode).
 		AddEdge(edge.Edge{From: flow.StartNode, To: ragNode.Name()}).
-		AddEdge(edge.Edge{From: ragNode.Name(), To: chatNode.Name()}).
-		AddEdge(edge.Edge{From: chatNode.Name(), To: flow.EndNode}).
+		AddEdge(edge.Edge{From: ragNode.Name(), To: modelNode.Name()}).
+		AddEdge(edge.Edge{From: modelNode.Name(), To: flow.EndNode}).
 		Compile()
 
 	if err != nil {
